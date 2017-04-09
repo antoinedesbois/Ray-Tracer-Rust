@@ -1,0 +1,7 @@
+[package]
+name = "ray_tracer_rust"
+version = "0.1.0"
+authors = ["Antoine <antoine.desbois@usherbrooke.ca>"]
+
+[dependencies]
+image = "0.12.3"
