@@ -17,17 +17,43 @@ pub struct Color {
     pub blue : f32
 }
 
-pub struct Sphere {
-    pub radius: f32,
+pub struct Object {
     pub color: Color,
     pub to_object: Matrix4<f32>,
     pub to_world: Matrix4<f32>
 }
 
+pub struct Sphere {
+    pub radius: f32,
+    pub object: Object
+}
+
+pub struct Plane {
+    pub x_min: f32,
+    pub x_max: f32,
+    pub z_min: f32,
+    pub z_max: f32,
+    pub object: Object
+}
+
+pub enum Element {
+    Sphere(Sphere),
+    Plane(Plane)
+}
+
+impl Element {
+    pub fn color(&self) -> &Color {
+        match *self {
+            Element::Sphere(ref s) => &s.object.color,
+            Element::Plane(ref p) => &p.object.color,
+        }
+    }
+}
+
 pub struct Scene {
     pub width: u32,
     pub height: u32,
-    pub sphere: Sphere
+    pub elements: Vec<Element>
 }
 
 pub struct Intersection {
@@ -42,7 +68,7 @@ pub struct Ray {
 }
 
 const GAMMA: f32 = 2.2;
-const NB_RAY: u32 = 200; //Per pixel
+const NB_RAY: u32 = 1; //Per pixel
 fn gamma_encode(linear: f32) -> f32 {
     linear.powf(1.0 / GAMMA)
 }
@@ -115,7 +141,7 @@ impl Intersectable for Sphere {
     fn intersect(&self, ray: &mut Ray) -> bool {
 
         //bring ray to object space
-        let obj_ray = ray.transform_to(&self.to_object);
+        let obj_ray = ray.transform_to(&self.object.to_object);
 
         let a = obj_ray.direction.x * obj_ray.direction.x +
                 obj_ray.direction.y * obj_ray.direction.y +
@@ -134,25 +160,68 @@ impl Intersectable for Sphere {
         if t1 > 0.0 {
             ray_hit = true;
             ray.intersection.point =
-                self.to_world.transform_point(&get_intersection_point(&obj_ray, t1));
+                self.object.to_world.transform_point(&get_intersection_point(&obj_ray, t1));
             ray.intersection.color = Color {
-                red: self.color.red,
-                green: self.color.green,
-                blue: self.color.blue
+                red: self.object.color.red,
+                green: self.object.color.green,
+                blue: self.object.color.blue
             };
         }
         else if t2 > 0.0 {
             ray_hit = true;
             ray.intersection.point =
-                self.to_world.transform_point(&get_intersection_point(&obj_ray, t2));
+                self.object.to_world.transform_point(&get_intersection_point(&obj_ray, t2));
             ray.intersection.color = Color {
-                red: self.color.red,
-                green: self.color.green,
-                blue: self.color.blue
+                red: self.object.color.red,
+                green: self.object.color.green,
+                blue: self.object.color.blue
             };
         }
 
         return ray_hit;
+    }
+}
+
+impl Intersectable for Plane {
+    fn intersect(&self, ray: &mut Ray) -> bool {
+        let obj_ray = ray.transform_to(&self.object.to_object);
+
+        // first, check against unbounded plane
+        let t0: f32 = - obj_ray.origin.y / obj_ray.direction.y;
+
+        print!("{}", t0);
+        if t0 < 0.0 {
+            return false;
+        }
+
+        let inter_point: Point3<f32> =
+            self.object.to_world.transform_point(&get_intersection_point(&obj_ray, t0));
+
+        let point_x: f32 = inter_point.x;
+        let point_z: f32 = inter_point.z;
+        if point_x > self.x_min && point_x < self.x_max &&
+           point_z > self.z_min && point_z < self.z_max 
+        {
+            ray.intersection.point = inter_point;
+            ray.intersection.color = Color {
+                red: self.object.color.red,
+                green: self.object.color.green,
+                blue: self.object.color.blue
+            };
+    		return true;
+        }
+
+        return false;
+    }
+}
+
+
+impl Intersectable for Element {
+    fn intersect(&self, ray: &mut Ray) -> bool {
+        match *self {
+            Element::Sphere(ref s) => s.intersect(ray),
+            Element::Plane(ref p) => p.intersect(ray)
+        }
     }
 }
 
@@ -189,9 +258,15 @@ pub fn render(scene: &Scene) -> DynamicImage {
                     }
                 };
 
-                if scene.sphere.intersect(&mut r) {
-                    avg_col.red = avg_col.red + (scene.sphere.color.red / NB_RAY as f32);
-                }        
+                for i in &scene.elements {
+                    if i.intersect(&mut r) {
+                        let col = i.color();
+                        avg_col.red = avg_col.red + (col.red / NB_RAY as f32);
+                        avg_col.green = avg_col.green + (col.green / NB_RAY as f32);
+                        avg_col.blue = avg_col.blue + (col.blue / NB_RAY as f32);
+                    }        
+                }
+
             }
 
             // put_pixel use top left pixel as (0, 0)
@@ -205,24 +280,45 @@ pub fn render(scene: &Scene) -> DynamicImage {
 
 fn main() {
     println!("Ray tracer starting...");
-
     println!("Building scene");
-    let trans = Matrix4::new_translation(&Vector3::new(300.0, 200.0, -100.0));
-    let inv_trans = Matrix4::new_translation(&Vector3::new(-300.0, -200.0, 100.0));
+    let elems = vec![
+        Element::Sphere(
+            Sphere {
+                radius: 500.0,
+                object: Object {
+                    color: Color {
+                        red: 1.0,
+                        green: 0.0,
+                        blue: 0.0
+                    },
+                    to_object: Matrix4::new_translation(&Vector3::new(300.0, 200.0, -100.0)),
+                    to_world: Matrix4::new_translation(&Vector3::new(-300.0, -200.0, 100.0))
+                }
+            }
+        ),
+        Element::Plane(
+            Plane {
+                x_min: -100.0,
+                x_max: 100.0,
+                z_min: -100.0,
+                z_max: 1000.0,
+                object: Object {
+                    color: Color {
+                        red: 0.0,
+                        green: 1.0,
+                        blue: 0.0
+                    },
+                    to_object: Matrix4::from_axis_angle(&Vector3::x_axis(), 1.2),
+                    to_world: Matrix4::from_axis_angle(&Vector3::x_axis(), 1.2)
+                }
+            }
+        )
+    ];
 
     let scene = Scene {
         width: 1920,
         height: 1080,
-        sphere: Sphere {
-            to_object: inv_trans,
-            to_world: trans,
-            radius: 500.0,
-            color: Color {
-                red: 1.0,
-                green: 0.0,
-                blue: 0.0,
-            },
-        },
+        elements: elems
     };
 
     println!("Rendering...");
@@ -233,28 +329,3 @@ fn main() {
     img.save(fout, image::PNG).unwrap();
 }
 
-#[test]
-fn test_can_render_scene() {
-    use image::GenericImage;
-    let scene = Scene {
-        width: 1920,
-        height: 1080,
-        sphere: Sphere {
-            center: Point3 {
-                x: 400.0,
-                y: 300.0,
-                z: -10.0,
-            },
-            radius: 100.0,
-            color: Color {
-                red: 0.4,
-                green: 1.0,
-                blue: 0.4,
-            },
-        },
-    };
-
-    let img: DynamicImage = render(&scene);
-    assert_eq!(scene.width, img.width());
-    assert_eq!(scene.height, img.height());
-}
