@@ -4,12 +4,15 @@ extern crate alga;
 extern crate rand;
 extern crate num_cpus;
 extern crate threadpool;
+extern crate pbr;
 
 use image::{DynamicImage, Rgba, GenericImage, Pixel};
 use nalgebra::{Point3, Vector3, Matrix4};
 use alga::linear::Transformation;
 use threadpool::ThreadPool;
+use pbr::ProgressBar;
 
+use rand::distributions::{IndependentSample, Range};
 use std::sync::{Arc, Mutex, mpsc};
 use std::fmt;
 use std::fs::File;
@@ -19,6 +22,16 @@ pub struct Color {
     pub red : f32,
     pub green : f32,
     pub blue : f32
+}
+
+impl Color {
+    pub fn new_black() -> Color {
+        return Color { red: 0.0, green: 0.0, blue: 0.0 };
+    }
+
+    pub fn new_copy(color : &Color) -> Color {
+        return Color { red: color.red, green: color.green, blue: color.blue };
+    }
 }
 
 pub struct Object {
@@ -45,6 +58,10 @@ pub enum Element {
     Plane(Plane)
 }
 
+pub struct Light {
+    pub position: Point3<f32>
+}
+
 impl Element {
     pub fn color(&self) -> &Color {
         match *self {
@@ -57,12 +74,24 @@ impl Element {
 pub struct Scene {
     pub width: u32,
     pub height: u32,
-    pub elements: Vec<Element>
+    pub elements: Vec<Element>,
+    pub lights: Light
 }
 
 pub struct Intersection {
     pub point: Point3<f32>,
-    pub color: Color
+    pub color: Color,
+    pub time: f32
+}
+
+impl Intersection {
+    pub fn new_empty() -> Intersection {
+        return Intersection {
+           point: Point3::new(0.0, 0.0, 0.0),
+            color: Color::new_black(),
+            time: std::f32::MAX
+        }
+    }
 }
 
 pub struct Ray {
@@ -72,7 +101,7 @@ pub struct Ray {
 }
 
 const GAMMA: f32 = 2.2;
-const NB_RAY: u32 = 400; //Per pixel
+const NB_RAY: u32 = 100; //Per pixel
 fn gamma_encode(linear: f32) -> f32 {
     linear.powf(1.0 / GAMMA)
 }
@@ -86,12 +115,37 @@ impl Color {
     }
 }
 
-fn gen_random_sample() -> (f32, f32) {
-    let x = rand::random::<f32>();
-    let y = rand::random::<f32>();
+fn gen_random_sample(lower_bound: f32, upper_bound: f32) -> f32 {
+    let mut rng = rand::thread_rng();
+    let between = Range::new(lower_bound, upper_bound);
 
-    return (x, y);
+    return between.ind_sample(&mut rng);
 }
+
+fn gen_random_color() -> Color {
+    return Color { 
+        red: gen_random_sample(0.0, 1.0), 
+        green: gen_random_sample(0.0, 1.0), 
+        blue: gen_random_sample(0.0 ,1.0) 
+    }
+}
+
+fn gen_random_sphere() -> Element {
+    let trans_x = gen_random_sample(-1000.0, 1000.0);
+    let trans_y = gen_random_sample(-1000.0, 1000.0);
+
+    return Element::Sphere(
+        Sphere {
+            radius: gen_random_sample(10.0, 100.0),
+            object: Object {
+                color: gen_random_color(),
+                to_object: Matrix4::new_translation(&Vector3::new(trans_x, trans_y, 1000.0)),
+                to_world: Matrix4::new_translation(&Vector3::new(-trans_x, -trans_y, -1000.0))
+            }
+        }
+    );
+}
+            
 
 fn quadratic_solution(a: f32, b: f32, c: f32) -> (f32, f32) {
     return (((- b + (b*b - 4.0*a*c).sqrt() ) / (2.0 * a)),
@@ -116,11 +170,8 @@ impl Transformable for Ray {
             direction: transform.transform_vector(&self.direction),
             intersection: Intersection {
                 point: self.intersection.point,
-                color: Color {
-                    red: self.intersection.color.red,
-                    green: self.intersection.color.green,
-                    blue: self.intersection.color.blue
-                }
+                color: Color::new_copy(&self.intersection.color),
+                time: self.intersection.time
             }
         };
 
@@ -161,25 +212,22 @@ impl Intersectable for Sphere {
         let (t1, t2) = quadratic_solution(a, b, c);
 
         let mut ray_hit = false;
-        if t1 > 0.0 {
+
+        if t1 > 0.0 && t1 < ray.intersection.time 
+        {
             ray_hit = true;
             ray.intersection.point =
                 self.object.to_world.transform_point(&get_intersection_point(&obj_ray, t1));
-            ray.intersection.color = Color {
-                red: self.object.color.red,
-                green: self.object.color.green,
-                blue: self.object.color.blue
-            };
+            ray.intersection.color = Color::new_copy(&self.object.color);
+            ray.intersection.time = t1;
         }
-        else if t2 > 0.0 {
+        if t2 > 0.0 && t2 < ray.intersection.time
+        {
             ray_hit = true;
             ray.intersection.point =
                 self.object.to_world.transform_point(&get_intersection_point(&obj_ray, t2));
-            ray.intersection.color = Color {
-                red: self.object.color.red,
-                green: self.object.color.green,
-                blue: self.object.color.blue
-            };
+            ray.intersection.color = Color::new_copy(&self.object.color);
+            ray.intersection.time = t2;
         }
 
         return ray_hit;
@@ -203,14 +251,11 @@ impl Intersectable for Plane {
         let point_x: f32 = inter_point.x;
         let point_z: f32 = inter_point.z;
         if point_x > self.x_min && point_x < self.x_max &&
-           point_z > self.z_min && point_z < self.z_max 
+           point_z > self.z_min && point_z < self.z_max && t0 < ray.intersection.time 
         {
             ray.intersection.point = inter_point;
-            ray.intersection.color = Color {
-                red: self.object.color.red,
-                green: self.object.color.green,
-                blue: self.object.color.blue
-            };
+            ray.intersection.color = Color::new_copy(&self.object.color);
+            ray.intersection.time = t0;
     		return true;
         }
 
@@ -235,36 +280,27 @@ pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
     let trans = Vector3::new(0.0, 0.0, -1.0);
     let w: f32 = scene.width as f32;
     let h: f32 = scene.height as f32;
-    let mut avg_col = Color {
-        red: 0.0, 
-        green: 0.0, 
-        blue: 0.0 
-    };
+    let mut avg_col = Color::new_black();
 
     for _ in 0..NB_RAY {
-        let (x, y) = gen_random_sample();
 
         let mut r = Ray {
-            origin: Point3::new(o_x - w/2.0 + x, o_y - h/2.0 + y, 0.0),
+            origin: Point3::new(o_x - w/2.0 + gen_random_sample(0.0, 1.0), 
+                                o_y - h/2.0 + gen_random_sample(0.0, 1.0), 
+                                0.0),
             direction: trans,
-            intersection: Intersection {
-                point: Point3::new(0.0,0.0,0.0),
-                color: Color {
-                    red: 0.0,
-                    green: 0.0,
-                    blue: 0.0
-                }
-            }
+            intersection: Intersection::new_empty()
         };
 
         for i in &scene.elements {
-            if i.intersect(&mut r) {
-                let col = i.color();
-                avg_col.red = avg_col.red + (col.red / NB_RAY as f32);
-                avg_col.green = avg_col.green + (col.green / NB_RAY as f32);
-                avg_col.blue = avg_col.blue + (col.blue / NB_RAY as f32);
-            }        
+            i.intersect(&mut r);
         }
+
+        // trace light
+
+        avg_col.red = avg_col.red + (r.intersection.color.red / NB_RAY as f32);
+        avg_col.green = avg_col.green + (r.intersection.color.green / NB_RAY as f32);
+        avg_col.blue = avg_col.blue + (r.intersection.color.blue / NB_RAY as f32);
 
     }
 
@@ -274,13 +310,14 @@ pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
 pub fn render(scene: Scene) {
     let w = scene.width;
     let h = scene.height;
-    // let mut img = DynamicImage::new_rgb8(w, h);
 
     let img = Arc::new(Mutex::new(DynamicImage::new_rgb8(w, h)));
     let scene_ptr = Arc::new(scene);
 
     let pool = ThreadPool::new(num_cpus::get());
     let (tx, rx) = mpsc::channel();
+    let mut pb = ProgressBar::new( (w * h) as u64);
+    pb.format("╢▌▌░╟");
 
     for px in 0..w {
         for py in 0..h {
@@ -288,6 +325,7 @@ pub fn render(scene: Scene) {
             let tx = tx.clone();
             let cur_scene = scene_ptr.clone();
             let cur_img = img.clone();
+
             pool.execute(move || {
                 let color = render_pixel(px, py, cur_scene);
                 let mut cur_img = cur_img.lock().unwrap();
@@ -297,9 +335,13 @@ pub fn render(scene: Scene) {
 
                 tx.send(()).unwrap();
             });
+
+            pb.inc();
             
         }
     }
+
+    pb.finish_print("done");
 
     for _ in 0..w {
         for _ in 0..h {
@@ -317,44 +359,52 @@ pub fn render(scene: Scene) {
 fn main() {
     println!("Ray tracer starting...");
     println!("Building scene");
-    let elems = vec![
-        Element::Sphere(
-            Sphere {
-                radius: 500.0,
-                object: Object {
-                    color: Color {
-                        red: 1.0,
-                        green: 0.0,
-                        blue: 0.0
-                    },
-                    to_object: Matrix4::new_translation(&Vector3::new(300.0, 200.0, -100.0)),
-                    to_world: Matrix4::new_translation(&Vector3::new(-300.0, -200.0, 100.0))
-                }
-            }
-        ),
-        Element::Plane(
-            Plane {
-                x_min: -100.0,
-                x_max: 100.0,
-                z_min: -100.0,
-                z_max: 1000.0,
-                object: Object {
-                    color: Color {
-                        red: 0.0,
-                        green: 1.0,
-                        blue: 0.0
-                    },
-                    to_object: Matrix4::from_axis_angle(&Vector3::x_axis(), 1.2),
-                    to_world: Matrix4::from_axis_angle(&Vector3::x_axis(), 1.2)
-                }
-            }
-        )
+    let mut elems = vec![
+        // Element::Sphere(
+        //     Sphere {
+        //         radius: 500.0,
+        //         object: Object {
+        //             color: Color {
+        //                 red: 1.0,
+        //                 green: 0.0,
+        //                 blue: 0.0
+        //             },
+        //             to_object: Matrix4::new_translation(&Vector3::new(300.0, 200.0, -100.0)),
+        //             to_world: Matrix4::new_translation(&Vector3::new(-300.0, -200.0, 100.0))
+        //         }
+        //     }
+        // )
+        // Element::Plane(
+        //     Plane {
+        //         x_min: -100.0,
+        //         x_max: 100.0,
+        //         z_min: -100.0,
+        //         z_max: 1000.0,
+        //         object: Object {
+        //             color: Color {
+        //                 red: 0.0,
+        //                 green: 1.0,
+        //                 blue: 0.0
+        //             },
+        //             to_object: Matrix4::from_axis_angle(&Vector3::x_axis(), 1.2),
+        //             to_world: Matrix4::from_axis_angle(&Vector3::x_axis(), 1.2)
+        //         }
+        //     }
+        // )
     ];
+
+    for _ in 0..1000 {
+        elems.push( gen_random_sphere());
+    }
 
     let scene = Scene {
         width: 1920,
         height: 1080,
-        elements: elems
+        elements: elems,
+        lights: Light {
+            position: Point3::new(0.0, 0.0, -100.0)
+
+        }
     };
 
     println!("Rendering...");
