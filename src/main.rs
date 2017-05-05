@@ -2,11 +2,15 @@ extern crate image;
 extern crate nalgebra;
 extern crate alga;
 extern crate rand;
+extern crate num_cpus;
+extern crate threadpool;
 
 use image::{DynamicImage, Rgba, GenericImage, Pixel};
 use nalgebra::{Point3, Vector3, Matrix4};
 use alga::linear::Transformation;
+use threadpool::ThreadPool;
 
+use std::sync::{Arc, Mutex, mpsc};
 use std::fmt;
 use std::fs::File;
 use std::path::Path;
@@ -68,7 +72,7 @@ pub struct Ray {
 }
 
 const GAMMA: f32 = 2.2;
-const NB_RAY: u32 = 1; //Per pixel
+const NB_RAY: u32 = 400; //Per pixel
 fn gamma_encode(linear: f32) -> f32 {
     linear.powf(1.0 / GAMMA)
 }
@@ -189,7 +193,6 @@ impl Intersectable for Plane {
         // first, check against unbounded plane
         let t0: f32 = - obj_ray.origin.y / obj_ray.direction.y;
 
-        print!("{}", t0);
         if t0 < 0.0 {
             return false;
         }
@@ -225,57 +228,90 @@ impl Intersectable for Element {
     }
 }
 
-pub fn render(scene: &Scene) -> DynamicImage {
-    let mut img = DynamicImage::new_rgb8(scene.width, scene.height);
-
+pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
+    //Create ray and trace
+    let o_x: f32 = px as f32;
+    let o_y: f32 = py as f32;
     let trans = Vector3::new(0.0, 0.0, -1.0);
-    for px in 0..scene.width {
-        for py in 0..scene.height {
-            //Create ray and trace
-            let o_x: f32 = px as f32;
-            let o_y: f32 = py as f32;
-            let w: f32 = scene.width as f32;
-            let h: f32 = scene.height as f32;
+    let w: f32 = scene.width as f32;
+    let h: f32 = scene.height as f32;
+    let mut avg_col = Color {
+        red: 0.0, 
+        green: 0.0, 
+        blue: 0.0 
+    };
 
-            let mut avg_col = Color { 
-                red: 0.0, 
-                green: 0.0, 
-                blue: 0.0 
-            };
-            for _ in 0..NB_RAY {
-                let (x, y) = gen_random_sample();
+    for _ in 0..NB_RAY {
+        let (x, y) = gen_random_sample();
 
-                let mut r = Ray {
-                    origin: Point3::new(o_x - w/2.0 + x, o_y - h/2.0 + y, 0.0),
-                    direction: trans,
-                    intersection: Intersection {
-                        point: Point3::new(0.0,0.0,0.0),
-                        color: Color {
-                            red: 0.0,
-                            green: 0.0,
-                            blue: 0.0
-                        }
-                    }
-                };
-
-                for i in &scene.elements {
-                    if i.intersect(&mut r) {
-                        let col = i.color();
-                        avg_col.red = avg_col.red + (col.red / NB_RAY as f32);
-                        avg_col.green = avg_col.green + (col.green / NB_RAY as f32);
-                        avg_col.blue = avg_col.blue + (col.blue / NB_RAY as f32);
-                    }        
+        let mut r = Ray {
+            origin: Point3::new(o_x - w/2.0 + x, o_y - h/2.0 + y, 0.0),
+            direction: trans,
+            intersection: Intersection {
+                point: Point3::new(0.0,0.0,0.0),
+                color: Color {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0
                 }
-
             }
+        };
 
+        for i in &scene.elements {
+            if i.intersect(&mut r) {
+                let col = i.color();
+                avg_col.red = avg_col.red + (col.red / NB_RAY as f32);
+                avg_col.green = avg_col.green + (col.green / NB_RAY as f32);
+                avg_col.blue = avg_col.blue + (col.blue / NB_RAY as f32);
+            }        
+        }
+
+    }
+
+    return avg_col;
+}
+
+pub fn render(scene: Scene) {
+    let w = scene.width;
+    let h = scene.height;
+    // let mut img = DynamicImage::new_rgb8(w, h);
+
+    let img = Arc::new(Mutex::new(DynamicImage::new_rgb8(w, h)));
+    let scene_ptr = Arc::new(scene);
+
+    let pool = ThreadPool::new(num_cpus::get());
+    let (tx, rx) = mpsc::channel();
+
+    for px in 0..w {
+        for py in 0..h {
             // put_pixel use top left pixel as (0, 0)
-            img.put_pixel(px, (scene.height -1) - py,
-                          Rgba::to_rgba(&avg_col.to_rgba()));
+            let tx = tx.clone();
+            let cur_scene = scene_ptr.clone();
+            let cur_img = img.clone();
+            pool.execute(move || {
+                let color = render_pixel(px, py, cur_scene);
+                let mut cur_img = cur_img.lock().unwrap();
+
+                cur_img.put_pixel(px, (h -1) - py,
+                          Rgba::to_rgba(&color.to_rgba()));
+
+                tx.send(()).unwrap();
+            });
+            
         }
     }
 
-    return img;
+    for _ in 0..w {
+        for _ in 0..h {
+            rx.recv().unwrap();
+        }
+    }
+
+    println!("Writting image to disk");
+    let ref mut fout = File::create(&Path::new("output.png")).unwrap();
+    let img = img.lock().unwrap();
+    img.save(fout, image::PNG).unwrap();
+
 }
 
 fn main() {
@@ -322,10 +358,8 @@ fn main() {
     };
 
     println!("Rendering...");
-    let img = render(&scene);
-
-    println!("Writting image to disk");
-    let ref mut fout = File::create(&Path::new("output.png")).unwrap();
-    img.save(fout, image::PNG).unwrap();
+    render(scene);
+    
 }
+
 
