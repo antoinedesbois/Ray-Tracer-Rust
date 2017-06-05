@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::fmt;
 use std::fs::File;
 use std::path::Path;
+use std::f32;
+use std::cmp::Ordering;
 
 pub struct Color {
     pub red : f32,
@@ -45,6 +47,30 @@ pub struct Sphere {
     pub object: Object
 }
 
+impl Sphere {
+    pub fn get_bounding_box(&self) -> BoundingBox {
+        let world_origin = &self.object.to_world.transform_point(&Point3::new(0.0, 0.0, 0.0));
+        return BoundingBox {
+            min: Point3::new(world_origin.x - self.radius, 
+                             world_origin.y - self.radius, 
+                             world_origin.z - self.radius),
+            max: Point3::new(world_origin.x + self.radius, 
+                             world_origin.y + self.radius, 
+                             world_origin.z + self.radius)
+        }
+    }
+}
+
+impl Plane {
+    //TODO implement
+    pub fn get_bounding_box(&self) -> BoundingBox {
+        return BoundingBox {
+            min: Point3::new(0.0, 0.0, 0.0),
+            max: Point3::new(0.0, 0.0, 0.0)
+        }
+    }
+}
+
 pub struct Plane {
     pub x_min: f32,
     pub x_max: f32,
@@ -58,8 +84,110 @@ pub enum Element {
     Plane(Plane)
 }
 
+#[derive(PartialEq, Eq)]
+pub enum Axis {
+    AxisX,
+    AxisY,
+    AxisZ
+}
+
 pub struct Light {
     pub position: Point3<f32>
+}
+
+pub struct BoundingBox {
+    pub min: Point3<f32>,
+    pub max: Point3<f32>
+}
+
+impl BoundingBox {
+    pub fn intersect_bbox(&self, bbox: &BoundingBox) -> bool {
+        if bbox.min.x > self.max.x { return false; }
+        if bbox.max.x < self.min.x { return false; }
+
+        if bbox.min.y > self.max.y { return false; }
+        if bbox.max.y < self.min.y { return false; }
+
+        if bbox.min.z > self.max.z { return false; }
+        if bbox.max.z < self.min.z { return false; }
+
+        return true;
+    }
+}
+
+impl Intersectable for BoundingBox {
+    #[allow(unused_variables)]
+    fn intersect(&self, ray: &mut Ray) -> bool {
+        let t0 = 0.0;
+        let t1 = f32::MAX;
+
+        let mut tmin: f32;
+        let mut tmax: f32;
+        let tymin: f32;
+        let tymax: f32;
+        let tzmin: f32;
+        let tzmax: f32;
+
+        if ray.direction.x >= 0.0 {
+            tmin = (self.min.x - ray.origin.x) / ray.direction.x;
+            tmax = (self.max.x - ray.origin.x) / ray.direction.x;
+        }
+        else {
+            tmin = (self.max.x - ray.origin.x) / ray.direction.x;
+            tmax = (self.min.x - ray.origin.x) / ray.direction.x;
+        }
+
+        if ray.direction.y >= 0.0 {
+            tymin = (self.min.y - ray.origin.y) / ray.direction.y;
+            tymax = (self.max.y - ray.origin.y) / ray.direction.y;
+        }
+        else {
+            tymin = (self.max.y - ray.origin.y) / ray.direction.y;
+            tymax = (self.min.y - ray.origin.y) / ray.direction.y;
+        }
+        
+        if tmin > tymax || tymin > tmax {
+            return false;
+        }
+
+        if tymin > tmin {
+            tmin = tymin;
+        }
+
+        if tymax < tmax {
+            tmax = tymax;
+        }
+
+        if ray.direction.z >= 0.0 {
+            tzmin = (self.min.z - ray.origin.z) / ray.direction.z;
+            tzmax = (self.max.z - ray.origin.z) / ray.direction.z;
+        }
+        else {
+            tzmin = (self.max.z - ray.origin.z) / ray.direction.z;
+            tzmax = (self.min.z - ray.origin.z) / ray.direction.z;
+        }
+
+        if tmin > tzmax || tzmin > tmax {
+            return false;
+        }
+
+        if tzmin > tmin {
+            tmin = tzmin;
+        }
+
+        if tzmax < tmax {
+            tmax = tzmax;
+        }
+
+        let intersect = tmin < t1 && tmax > t0;
+
+        if intersect {
+            ray.intersection.time = tmin;    
+        }
+
+        return intersect;
+        
+    }
 }
 
 impl Element {
@@ -69,13 +197,505 @@ impl Element {
             Element::Plane(ref p) => &p.object.color,
         }
     }
+
+    pub fn get_bounding_box(&self) -> BoundingBox {
+        match *self {
+            Element::Sphere(ref s) => s.get_bounding_box(),
+            Element::Plane(ref p) => p.get_bounding_box(),
+        }
+    }
 }
 
 pub struct Scene {
     pub width: u32,
     pub height: u32,
-    pub elements: Vec<Element>,
-    pub lights: Light
+    pub elements: Vec<Arc<Element>>,
+    pub lights: Light,
+    pub bvh: BoundingVolumeHierarchy
+}
+
+pub struct BVHNode {
+    pub bbox: BoundingBox,
+    pub elements: Vec<Arc<Element>>,
+    pub left_child: Option<Arc<BVHNode>>,
+    pub right_child: Option<Arc<BVHNode>>
+}
+
+pub struct BoundingVolumeHierarchy {
+    pub root_node: BVHNode
+}
+
+
+
+#[allow(unused_variables)]
+impl BVHNode {
+    pub fn new(elements: Vec<Arc<Element>>) -> BVHNode {
+        let mut x_min = f32::MAX;
+        let mut y_min = f32::MAX;
+        let mut z_min = f32::MAX;
+
+        let mut x_max = f32::MIN;
+        let mut y_max = f32::MIN;
+        let mut z_max = f32::MIN;
+
+        //Create bounding box for the node
+        for elem in &elements {
+            let bbox = elem.get_bounding_box();
+
+            if bbox.min.x < x_min {
+                x_min = bbox.min.x;
+            }
+            if bbox.min.y < y_min {
+                y_min = bbox.min.y;
+            }
+            if bbox.min.z < z_min {
+                z_min = bbox.min.z;
+            }
+
+            if bbox.max.x > x_max {
+                x_max = bbox.max.x;
+            }
+            if bbox.max.y > y_max {
+                y_max = bbox.max.y;
+            }
+            if bbox.max.z > z_max {
+                z_max = bbox.max.z;
+            }
+        }
+
+        let left: Option<Arc<BVHNode>>;
+        let right: Option<Arc<BVHNode>>;
+
+        let num_elem = elements.len();
+        if num_elem > NB_ELEM_PER_LEAF {
+
+            //Check biggest axis
+            let x_delta: f32 = x_max - x_min;
+            let y_delta: f32 = y_max - y_min;
+            let z_delta: f32 = z_max - z_min;
+            let mut v: Vec<Arc<Element>> = elements.clone();
+
+            //construct 2 non-overlapping BoundingBox
+            let mut b1 = BoundingBox {
+                min: Point3::new(x_min, y_min, z_min),
+                max: Point3::new(x_max, y_max, z_max)
+            };
+            let mut b2 = BoundingBox {
+                min: Point3::new(x_min, y_min, z_min),
+                max: Point3::new(x_max, y_max, z_max)
+            };
+            let mut v1: Vec<Arc<Element>> = vec![];
+            let mut v2: Vec<Arc<Element>> = vec![];
+
+            if x_delta >= y_delta && x_delta >= z_delta {
+                //order on X
+                v.sort_by(|a, b| {
+                    if a.get_bounding_box().min.x < b.get_bounding_box().min.x {
+                        return Ordering::Greater;    
+                    }
+                    else {
+                        return Ordering::Less;
+                    }
+                    
+                });
+
+                b1.min.x = x_min;
+                b1.min.y = y_min;
+                b1.min.z = z_min;
+                b1.max.x = elements[num_elem/2].get_bounding_box().min.x;
+                b1.max.y = y_max;
+                b1.max.z = z_max;
+
+                
+                b2.min.x = b1.max.x;
+                b2.min.y = y_min;
+                b2.min.z = z_min;
+                b2.max.x = elements.last().unwrap().get_bounding_box().max.x;
+                b2.max.y = y_max;
+                b2.max.z = z_max;
+
+                //push object in appropriate vectors
+                for elem in &elements {
+                    if elem.get_bounding_box().intersect_bbox(&b1) {
+                        v1.push(elem.clone());
+                    }
+                    if elem.get_bounding_box().intersect_bbox(&b2){
+                        v2.push(elem.clone());
+                    }
+                }
+            }
+            else if y_delta >= x_delta && y_delta >= z_delta {
+                //order on Y
+                v.sort_by(|a, b| {
+                    if a.get_bounding_box().min.y < b.get_bounding_box().min.y {
+                        return Ordering::Greater;    
+                    }
+                    else {
+                        return Ordering::Less;
+                    }
+                    
+                });
+
+                b1.min.x = x_min;
+                b1.min.y = y_min;
+                b1.min.z = z_min;
+                b1.max.x = x_max;
+                b1.max.y = elements[num_elem/2].get_bounding_box().min.y;
+                b1.max.z = z_max;
+
+                
+                b2.min.x = b1.max.x;
+                b2.min.y = y_min;
+                b2.min.z = z_min;
+                b2.max.x = x_max;
+                b2.max.y = elements.last().unwrap().get_bounding_box().max.y;
+                b2.max.z = z_max;
+
+                //push object in appropriate vectors
+                for elem in &elements {
+                    if elem.get_bounding_box().intersect_bbox(&b1) {
+                        v1.push(elem.clone());
+                    }
+                    if elem.get_bounding_box().intersect_bbox(&b2){
+                        v2.push(elem.clone());
+                    }
+                }
+            }
+            else {
+                //order on Z
+                v.sort_by(|a, b| {
+                    if a.get_bounding_box().min.z < b.get_bounding_box().min.z {
+                        return Ordering::Greater;    
+                    }
+                    else {
+                        return Ordering::Less;
+                    }
+                    
+                });
+
+                b1.min.x = x_min;
+                b1.min.y = y_min;
+                b1.min.z = z_min;
+                b1.max.x = x_max;
+                b1.max.y = y_max;
+                b1.max.z = elements[num_elem/2].get_bounding_box().min.z;
+
+                
+                b2.min.x = b1.max.x;
+                b2.min.y = y_min;
+                b2.min.z = z_min;
+                b2.max.x = x_max;
+                b2.max.y = y_max;
+                b2.max.z = elements.last().unwrap().get_bounding_box().max.z;
+
+                //push object in appropriate vectors
+                for elem in &elements {
+                    if elem.get_bounding_box().intersect_bbox(&b1) {
+                        v1.push(elem.clone());
+                    }
+                    if elem.get_bounding_box().intersect_bbox(&b2){
+                        v2.push(elem.clone());
+                    }
+                }
+            }
+
+
+            let len_dif: i32 = (v1.len() - v2.len()) as i32;
+            if len_dif.abs() > 100 {
+                left = Some(Arc::new(BVHNode::new_from_bbox(v1, b1)));
+                right = Some(Arc::new(BVHNode::new_from_bbox(v2, b2)));
+
+            }
+            else {
+                left = None;
+                right = None;
+            }
+        }
+        else {
+            left = None;
+            right = None;
+        }
+
+        return BVHNode {
+            bbox: BoundingBox {
+                min: Point3::new(x_min, y_min, z_min),
+                max: Point3::new(x_max, y_max, z_max)
+            },
+            elements: elements,
+            left_child: left,
+            right_child: right
+        }
+    }
+
+    pub fn new_from_bbox(elements: Vec<Arc<Element>>, bbox: BoundingBox) -> BVHNode {
+        let mut x_min = f32::MAX;
+        let mut y_min = f32::MAX;
+        let mut z_min = f32::MAX;
+
+        let mut x_max = f32::MIN;
+        let mut y_max = f32::MIN;
+        let mut z_max = f32::MIN;
+
+        //Create bounding box for the node
+        for elem in &elements {
+            let bbox = elem.get_bounding_box();
+
+            if bbox.min.x < x_min {
+                x_min = bbox.min.x;
+            }
+            if bbox.min.y < y_min {
+                y_min = bbox.min.y;
+            }
+            if bbox.min.z < z_min {
+                z_min = bbox.min.z;
+            }
+
+            if bbox.max.x > x_max {
+                x_max = bbox.max.x;
+            }
+            if bbox.max.y > y_max {
+                y_max = bbox.max.y;
+            }
+            if bbox.max.z > z_max {
+                z_max = bbox.max.z;
+            }
+        }
+
+        let left: Option<Arc<BVHNode>>;
+        let right: Option<Arc<BVHNode>>;
+
+        let num_elem = elements.len();
+        if num_elem > NB_ELEM_PER_LEAF {
+
+            //Check biggest axis
+            let x_delta: f32 = bbox.max.x - bbox.min.x;
+            let y_delta: f32 = bbox.max.y - bbox.min.y;
+            let z_delta: f32 = bbox.max.z - bbox.min.z;
+            let mut v: Vec<Arc<Element>> = elements.clone();
+
+            //construct 2 non-overlapping BoundingBox
+            let mut b1 = BoundingBox {
+                min: Point3::new(x_min, y_min, z_min),
+                max: Point3::new(x_max, y_max, z_max)
+            };
+            let mut b2 = BoundingBox {
+                min: Point3::new(x_min, y_min, z_min),
+                max: Point3::new(x_max, y_max, z_max)
+            };
+            let mut v1: Vec<Arc<Element>> = vec![];
+            let mut v2: Vec<Arc<Element>> = vec![];
+
+            if x_delta >= y_delta && x_delta >= z_delta {
+                //order on X
+                v.sort_by(|a, b| {
+                    if a.get_bounding_box().min.x < b.get_bounding_box().min.x {
+                        return Ordering::Greater;    
+                    }
+                    else {
+                        return Ordering::Less;
+                    }
+                    
+                });
+
+                b1.min.x = x_min;
+                b1.min.y = y_min;
+                b1.min.z = z_min;
+                b1.max.x = elements[num_elem/2].get_bounding_box().min.x;
+                b1.max.y = y_max;
+                b1.max.z = z_max;
+
+                
+                b2.min.x = b1.max.x;
+                b2.min.y = y_min;
+                b2.min.z = z_min;
+                b2.max.x = elements.last().unwrap().get_bounding_box().max.x;
+                b2.max.y = y_max;
+                b2.max.z = z_max;
+
+                //push object in appropriate vectors
+                for elem in &elements {
+                    if elem.get_bounding_box().intersect_bbox(&b1) {
+                        v1.push(elem.clone());
+                    }
+                    if elem.get_bounding_box().intersect_bbox(&b2){
+                        v2.push(elem.clone());
+                    }
+                }
+            }
+            else if y_delta >= x_delta && y_delta >= z_delta {
+                //order on Y
+                v.sort_by(|a, b| {
+                    if a.get_bounding_box().min.y < b.get_bounding_box().min.y {
+                        return Ordering::Greater;    
+                    }
+                    else {
+                        return Ordering::Less;
+                    }
+                    
+                });
+
+                b1.min.x = x_min;
+                b1.min.y = y_min;
+                b1.min.z = z_min;
+                b1.max.x = x_max;
+                b1.max.y = elements[num_elem/2].get_bounding_box().min.y;
+                b1.max.z = z_max;
+
+                
+                b2.min.x = b1.max.x;
+                b2.min.y = y_min;
+                b2.min.z = z_min;
+                b2.max.x = x_max;
+                b2.max.y = elements.last().unwrap().get_bounding_box().max.y;
+                b2.max.z = z_max;
+
+                //push object in appropriate vectors
+                for elem in &elements {
+                    if elem.get_bounding_box().intersect_bbox(&b1) {
+                        v1.push(elem.clone());
+                    }
+                    if elem.get_bounding_box().intersect_bbox(&b2){
+                        v2.push(elem.clone());
+                    }
+                }
+            }
+            else {
+                //order on Z
+                v.sort_by(|a, b| {
+                    if a.get_bounding_box().min.z < b.get_bounding_box().min.z {
+                        return Ordering::Greater;    
+                    }
+                    else {
+                        return Ordering::Less;
+                    }
+                    
+                });
+
+                b1.min.x = x_min;
+                b1.min.y = y_min;
+                b1.min.z = z_min;
+                b1.max.x = x_max;
+                b1.max.y = y_max;
+                b1.max.z = elements[num_elem/2].get_bounding_box().min.z;
+
+                
+                b2.min.x = b1.max.x;
+                b2.min.y = y_min;
+                b2.min.z = z_min;
+                b2.max.x = x_max;
+                b2.max.y = y_max;
+                b2.max.z = elements.last().unwrap().get_bounding_box().max.z;
+
+                //push object in appropriate vectors
+                for elem in &elements {
+                    if elem.get_bounding_box().intersect_bbox(&b1) {
+                        v1.push(elem.clone());
+                    }
+                    if elem.get_bounding_box().intersect_bbox(&b2){
+                        v2.push(elem.clone());
+                    }
+                }
+            }
+
+            let len_dif: i32 = (v1.len() - v2.len()) as i32;
+            if len_dif.abs() > 100 {
+                left = Some(Arc::new(BVHNode::new_from_bbox(v1, b1)));
+                right = Some(Arc::new(BVHNode::new_from_bbox(v2, b2)));
+
+            }
+            else {
+                left = None;
+                right = None;
+            }
+        }
+        else {
+            left = None;
+            right = None;
+        }
+
+        return BVHNode {
+            bbox: bbox,
+            elements: elements,
+            left_child: left,
+            right_child: right
+        }
+    }
+}
+
+impl BoundingVolumeHierarchy {
+    pub fn new_from_objects(elements: Vec<Arc<Element>>) -> BoundingVolumeHierarchy {
+        return BoundingVolumeHierarchy {
+            root_node: BVHNode::new(elements)
+        }
+    }
+}
+
+pub trait Intersectable {
+    fn intersect(&self, ray: &mut Ray) -> bool;
+}
+
+impl Intersectable for BoundingVolumeHierarchy {
+    fn intersect(&self, ray: &mut Ray) -> bool {
+        return self.root_node.intersect(ray);
+    }
+}
+
+impl Intersectable for BVHNode {
+    #[allow(unused_variables)]
+    #[allow(unused_mut)]
+    fn intersect(&self, ray: &mut Ray) -> bool {
+        // if we are a leaf, do actual intersection test, else go down the tree
+
+        let mut ray_hit = false;
+        if self.left_child.is_none() && self.right_child.is_none() {
+            for i in &self.elements {
+                ray_hit |= i.intersect(ray);
+            }
+        } else {
+            assert!(self.left_child.is_some() && self.right_child.is_some());
+
+            // check which subtree to explore first
+            let mut r_left: Ray = Ray::new_from(ray);
+            let mut r_right: Ray = Ray::new_from(ray);
+
+            let left_chil_bbox = &self.left_child.clone().unwrap().bbox;
+            let left_intersect = left_chil_bbox.intersect(&mut r_left);
+
+            let right_chil_bbox = &self.right_child.clone().unwrap().bbox;
+            let right_intersect = right_chil_bbox.intersect(&mut r_right);
+
+            if left_intersect && right_intersect {
+                //check which intersected first
+                if r_left.intersection.time < r_right.intersection.time {
+                    ray_hit |= self.left_child.clone().unwrap().intersect(ray);
+
+                    if !ray_hit {
+                        ray_hit |= self.right_child.clone().unwrap().intersect(ray);
+                    }
+                }
+                else {
+                    ray_hit |= self.right_child.clone().unwrap().intersect(ray);
+
+                    if !ray_hit {
+                        ray_hit |= self.left_child.clone().unwrap().intersect(ray);
+                    }
+                }
+            }
+            else if left_intersect {
+                ray_hit = self.left_child.clone().unwrap().intersect(ray);
+            }
+            else if right_intersect {
+                ray_hit = self.right_child.clone().unwrap().intersect(ray);
+            }
+        }
+
+
+        // let mut ray_hit = false;
+        // for i in &self.elements {
+        //     ray_hit |= i.intersect(ray);
+        // }
+        return ray_hit;
+    }
 }
 
 pub struct Intersection {
@@ -100,8 +720,19 @@ pub struct Ray {
     pub intersection: Intersection
 }
 
+impl Ray {
+    pub fn new_from(ray: &Ray) -> Ray {
+        return  Ray {
+            origin: ray.origin,
+            direction: ray.direction,
+            intersection: Intersection::new_empty()
+        };
+    }
+}
+
 const GAMMA: f32 = 2.2;
-const NB_RAY: u32 = 100; //Per pixel
+const NB_RAY: u32 = 10; //Per pixel
+const NB_ELEM_PER_LEAF: usize = 50;
 fn gamma_encode(linear: f32) -> f32 {
     linear.powf(1.0 / GAMMA)
 }
@@ -186,10 +817,6 @@ impl fmt::Display for Ray {
                self.origin.y,
                self.origin.z)
     }
-}
-
-pub trait Intersectable {
-    fn intersect(&self, ray: &mut Ray) -> bool;
 }
 
 impl Intersectable for Sphere {
@@ -292,9 +919,7 @@ pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
             intersection: Intersection::new_empty()
         };
 
-        for i in &scene.elements {
-            i.intersect(&mut r);
-        }
+        &scene.bvh.intersect(&mut r);
 
         // trace light
 
@@ -334,20 +959,18 @@ pub fn render(scene: Scene) {
                           Rgba::to_rgba(&color.to_rgba()));
 
                 tx.send(()).unwrap();
-            });
-
-            pb.inc();
-            
+            });            
         }
     }
-
-    pb.finish_print("done");
 
     for _ in 0..w {
         for _ in 0..h {
             rx.recv().unwrap();
+            pb.inc();
         }
     }
+
+    pb.finish_print("done");
 
     println!("Writting image to disk");
     let ref mut fout = File::create(&Path::new("output.png")).unwrap();
@@ -393,18 +1016,25 @@ fn main() {
         // )
     ];
 
-    for _ in 0..1000 {
-        elems.push( gen_random_sphere());
+    for _ in 0..100000 {
+        elems.push( Arc::new(gen_random_sphere()));
     }
+
+    let elems2 = vec![];
+
+    // Build acceleration structure
+    println!("Building acceleration structure");
+    let bvh = BoundingVolumeHierarchy::new_from_objects(elems);
 
     let scene = Scene {
         width: 1920,
         height: 1080,
-        elements: elems,
+        elements: elems2,
         lights: Light {
             position: Point3::new(0.0, 0.0, -100.0)
 
-        }
+        },
+        bvh: bvh
     };
 
     println!("Rendering...");
