@@ -214,418 +214,82 @@ pub struct Scene {
     pub bvh: BoundingVolumeHierarchy
 }
 
-pub struct BVHNode {
+pub enum BVHNode {
+    BVHNodeCore(BVHNodeCore),
+    BVHNodeLeaf(BVHNodeLeaf)
+}
+
+pub struct BVHNodeCore {
     pub bbox: BoundingBox,
-    pub elements: Vec<Arc<Element>>,
     pub left_child: Option<Arc<BVHNode>>,
     pub right_child: Option<Arc<BVHNode>>
+}
+
+pub struct BVHNodeLeaf {
+    pub element: Arc<Element>
 }
 
 pub struct BoundingVolumeHierarchy {
     pub root_node: BVHNode
 }
 
-
-
-#[allow(unused_variables)]
-impl BVHNode {
-    pub fn new(elements: Vec<Arc<Element>>) -> BVHNode {
-        let mut x_min = f32::MAX;
-        let mut y_min = f32::MAX;
-        let mut z_min = f32::MAX;
-
-        let mut x_max = f32::MIN;
-        let mut y_max = f32::MIN;
-        let mut z_max = f32::MIN;
-
-        //Create bounding box for the node
-        for elem in &elements {
-            let bbox = elem.get_bounding_box();
-
-            if bbox.min.x < x_min {
-                x_min = bbox.min.x;
-            }
-            if bbox.min.y < y_min {
-                y_min = bbox.min.y;
-            }
-            if bbox.min.z < z_min {
-                z_min = bbox.min.z;
-            }
-
-            if bbox.max.x > x_max {
-                x_max = bbox.max.x;
-            }
-            if bbox.max.y > y_max {
-                y_max = bbox.max.y;
-            }
-            if bbox.max.z > z_max {
-                z_max = bbox.max.z;
-            }
-        }
-
-        let left: Option<Arc<BVHNode>>;
-        let right: Option<Arc<BVHNode>>;
-
-        let num_elem = elements.len();
-        if num_elem > NB_ELEM_PER_LEAF {
-
-            //Check biggest axis
-            let x_delta: f32 = x_max - x_min;
-            let y_delta: f32 = y_max - y_min;
-            let z_delta: f32 = z_max - z_min;
-            let mut v: Vec<Arc<Element>> = elements.clone();
-
-            //construct 2 non-overlapping BoundingBox
-            let mut b1 = BoundingBox {
-                min: Point3::new(x_min, y_min, z_min),
-                max: Point3::new(x_max, y_max, z_max)
-            };
-            let mut b2 = BoundingBox {
-                min: Point3::new(x_min, y_min, z_min),
-                max: Point3::new(x_max, y_max, z_max)
-            };
-            let mut v1: Vec<Arc<Element>> = vec![];
-            let mut v2: Vec<Arc<Element>> = vec![];
-
-            if x_delta >= y_delta && x_delta >= z_delta {
-                //order on X
-                v.sort_by(|a, b| {
-                    if a.get_bounding_box().min.x < b.get_bounding_box().min.x {
-                        return Ordering::Greater;    
-                    }
-                    else {
-                        return Ordering::Less;
-                    }
-                    
-                });
-
-                b1.min.x = x_min;
-                b1.min.y = y_min;
-                b1.min.z = z_min;
-                b1.max.x = elements[num_elem/2].get_bounding_box().min.x;
-                b1.max.y = y_max;
-                b1.max.z = z_max;
-
-                
-                b2.min.x = b1.max.x;
-                b2.min.y = y_min;
-                b2.min.z = z_min;
-                b2.max.x = elements.last().unwrap().get_bounding_box().max.x;
-                b2.max.y = y_max;
-                b2.max.z = z_max;
-
-                //push object in appropriate vectors
-                for elem in &elements {
-                    if elem.get_bounding_box().intersect_bbox(&b1) {
-                        v1.push(elem.clone());
-                    }
-                    if elem.get_bounding_box().intersect_bbox(&b2){
-                        v2.push(elem.clone());
-                    }
-                }
-            }
-            else if y_delta >= x_delta && y_delta >= z_delta {
-                //order on Y
-                v.sort_by(|a, b| {
-                    if a.get_bounding_box().min.y < b.get_bounding_box().min.y {
-                        return Ordering::Greater;    
-                    }
-                    else {
-                        return Ordering::Less;
-                    }
-                    
-                });
-
-                b1.min.x = x_min;
-                b1.min.y = y_min;
-                b1.min.z = z_min;
-                b1.max.x = x_max;
-                b1.max.y = elements[num_elem/2].get_bounding_box().min.y;
-                b1.max.z = z_max;
-
-                
-                b2.min.x = b1.max.x;
-                b2.min.y = y_min;
-                b2.min.z = z_min;
-                b2.max.x = x_max;
-                b2.max.y = elements.last().unwrap().get_bounding_box().max.y;
-                b2.max.z = z_max;
-
-                //push object in appropriate vectors
-                for elem in &elements {
-                    if elem.get_bounding_box().intersect_bbox(&b1) {
-                        v1.push(elem.clone());
-                    }
-                    if elem.get_bounding_box().intersect_bbox(&b2){
-                        v2.push(elem.clone());
-                    }
-                }
-            }
-            else {
-                //order on Z
-                v.sort_by(|a, b| {
-                    if a.get_bounding_box().min.z < b.get_bounding_box().min.z {
-                        return Ordering::Greater;    
-                    }
-                    else {
-                        return Ordering::Less;
-                    }
-                    
-                });
-
-                b1.min.x = x_min;
-                b1.min.y = y_min;
-                b1.min.z = z_min;
-                b1.max.x = x_max;
-                b1.max.y = y_max;
-                b1.max.z = elements[num_elem/2].get_bounding_box().min.z;
-
-                
-                b2.min.x = b1.max.x;
-                b2.min.y = y_min;
-                b2.min.z = z_min;
-                b2.max.x = x_max;
-                b2.max.y = y_max;
-                b2.max.z = elements.last().unwrap().get_bounding_box().max.z;
-
-                //push object in appropriate vectors
-                for elem in &elements {
-                    if elem.get_bounding_box().intersect_bbox(&b1) {
-                        v1.push(elem.clone());
-                    }
-                    if elem.get_bounding_box().intersect_bbox(&b2){
-                        v2.push(elem.clone());
-                    }
-                }
-            }
-
-
-            let len_dif: i32 = (v1.len() - v2.len()) as i32;
-            if len_dif.abs() > 100 {
-                left = Some(Arc::new(BVHNode::new_from_bbox(v1, b1)));
-                right = Some(Arc::new(BVHNode::new_from_bbox(v2, b2)));
-
-            }
-            else {
-                left = None;
-                right = None;
-            }
-        }
-        else {
-            left = None;
-            right = None;
-        }
-
-        return BVHNode {
-            bbox: BoundingBox {
-                min: Point3::new(x_min, y_min, z_min),
-                max: Point3::new(x_max, y_max, z_max)
-            },
-            elements: elements,
-            left_child: left,
-            right_child: right
-        }
-    }
-
-    pub fn new_from_bbox(elements: Vec<Arc<Element>>, bbox: BoundingBox) -> BVHNode {
-        let mut x_min = f32::MAX;
-        let mut y_min = f32::MAX;
-        let mut z_min = f32::MAX;
-
-        let mut x_max = f32::MIN;
-        let mut y_max = f32::MIN;
-        let mut z_max = f32::MIN;
-
-        //Create bounding box for the node
-        for elem in &elements {
-            let bbox = elem.get_bounding_box();
-
-            if bbox.min.x < x_min {
-                x_min = bbox.min.x;
-            }
-            if bbox.min.y < y_min {
-                y_min = bbox.min.y;
-            }
-            if bbox.min.z < z_min {
-                z_min = bbox.min.z;
-            }
-
-            if bbox.max.x > x_max {
-                x_max = bbox.max.x;
-            }
-            if bbox.max.y > y_max {
-                y_max = bbox.max.y;
-            }
-            if bbox.max.z > z_max {
-                z_max = bbox.max.z;
-            }
-        }
-
-        let left: Option<Arc<BVHNode>>;
-        let right: Option<Arc<BVHNode>>;
-
-        let num_elem = elements.len();
-        if num_elem > NB_ELEM_PER_LEAF {
-
-            //Check biggest axis
-            let x_delta: f32 = bbox.max.x - bbox.min.x;
-            let y_delta: f32 = bbox.max.y - bbox.min.y;
-            let z_delta: f32 = bbox.max.z - bbox.min.z;
-            let mut v: Vec<Arc<Element>> = elements.clone();
-
-            //construct 2 non-overlapping BoundingBox
-            let mut b1 = BoundingBox {
-                min: Point3::new(x_min, y_min, z_min),
-                max: Point3::new(x_max, y_max, z_max)
-            };
-            let mut b2 = BoundingBox {
-                min: Point3::new(x_min, y_min, z_min),
-                max: Point3::new(x_max, y_max, z_max)
-            };
-            let mut v1: Vec<Arc<Element>> = vec![];
-            let mut v2: Vec<Arc<Element>> = vec![];
-
-            if x_delta >= y_delta && x_delta >= z_delta {
-                //order on X
-                v.sort_by(|a, b| {
-                    if a.get_bounding_box().min.x < b.get_bounding_box().min.x {
-                        return Ordering::Greater;    
-                    }
-                    else {
-                        return Ordering::Less;
-                    }
-                    
-                });
-
-                b1.min.x = x_min;
-                b1.min.y = y_min;
-                b1.min.z = z_min;
-                b1.max.x = elements[num_elem/2].get_bounding_box().min.x;
-                b1.max.y = y_max;
-                b1.max.z = z_max;
-
-                
-                b2.min.x = b1.max.x;
-                b2.min.y = y_min;
-                b2.min.z = z_min;
-                b2.max.x = elements.last().unwrap().get_bounding_box().max.x;
-                b2.max.y = y_max;
-                b2.max.z = z_max;
-
-                //push object in appropriate vectors
-                for elem in &elements {
-                    if elem.get_bounding_box().intersect_bbox(&b1) {
-                        v1.push(elem.clone());
-                    }
-                    if elem.get_bounding_box().intersect_bbox(&b2){
-                        v2.push(elem.clone());
-                    }
-                }
-            }
-            else if y_delta >= x_delta && y_delta >= z_delta {
-                //order on Y
-                v.sort_by(|a, b| {
-                    if a.get_bounding_box().min.y < b.get_bounding_box().min.y {
-                        return Ordering::Greater;    
-                    }
-                    else {
-                        return Ordering::Less;
-                    }
-                    
-                });
-
-                b1.min.x = x_min;
-                b1.min.y = y_min;
-                b1.min.z = z_min;
-                b1.max.x = x_max;
-                b1.max.y = elements[num_elem/2].get_bounding_box().min.y;
-                b1.max.z = z_max;
-
-                
-                b2.min.x = b1.max.x;
-                b2.min.y = y_min;
-                b2.min.z = z_min;
-                b2.max.x = x_max;
-                b2.max.y = elements.last().unwrap().get_bounding_box().max.y;
-                b2.max.z = z_max;
-
-                //push object in appropriate vectors
-                for elem in &elements {
-                    if elem.get_bounding_box().intersect_bbox(&b1) {
-                        v1.push(elem.clone());
-                    }
-                    if elem.get_bounding_box().intersect_bbox(&b2){
-                        v2.push(elem.clone());
-                    }
-                }
-            }
-            else {
-                //order on Z
-                v.sort_by(|a, b| {
-                    if a.get_bounding_box().min.z < b.get_bounding_box().min.z {
-                        return Ordering::Greater;    
-                    }
-                    else {
-                        return Ordering::Less;
-                    }
-                    
-                });
-
-                b1.min.x = x_min;
-                b1.min.y = y_min;
-                b1.min.z = z_min;
-                b1.max.x = x_max;
-                b1.max.y = y_max;
-                b1.max.z = elements[num_elem/2].get_bounding_box().min.z;
-
-                
-                b2.min.x = b1.max.x;
-                b2.min.y = y_min;
-                b2.min.z = z_min;
-                b2.max.x = x_max;
-                b2.max.y = y_max;
-                b2.max.z = elements.last().unwrap().get_bounding_box().max.z;
-
-                //push object in appropriate vectors
-                for elem in &elements {
-                    if elem.get_bounding_box().intersect_bbox(&b1) {
-                        v1.push(elem.clone());
-                    }
-                    if elem.get_bounding_box().intersect_bbox(&b2){
-                        v2.push(elem.clone());
-                    }
-                }
-            }
-
-            let len_dif: i32 = (v1.len() - v2.len()) as i32;
-            if len_dif.abs() > 100 {
-                left = Some(Arc::new(BVHNode::new_from_bbox(v1, b1)));
-                right = Some(Arc::new(BVHNode::new_from_bbox(v2, b2)));
-
-            }
-            else {
-                left = None;
-                right = None;
-            }
-        }
-        else {
-            left = None;
-            right = None;
-        }
-
-        return BVHNode {
-            bbox: bbox,
-            elements: elements,
-            left_child: left,
-            right_child: right
+impl BVHNodeLeaf {
+    pub fn new(element: Arc<Element>) -> BVHNodeLeaf {
+        return BVHNodeLeaf {
+            element: element
         }
     }
 }
 
 impl BoundingVolumeHierarchy {
     pub fn new_from_objects(elements: Vec<Arc<Element>>) -> BoundingVolumeHierarchy {
+
+        //create node for each element
+        let mut to_combine = vec![];
+        for elem in &elements {
+            to_combine.push(BVHNodeLeaf::new(elem.clone()));
+        }
+
+        // 1. order primitive based on bounding box, lower volume at the beginning
+        to_combine.sort_by(|a, b| {
+            let bbox_a = a.element.get_bounding_box();
+            let bbox_b = b.element.get_bounding_box();
+            let bbox_a_min = bbox_a.min;
+            let bbox_a_max = bbox_a.max;
+            let bbox_b_min = bbox_b.min;
+            let bbox_b_max = bbox_b.max;
+
+            let volume_a = bbox_a_max.x - bbox_a_min.x *
+                           bbox_a_max.y - bbox_a_min.y *
+                           bbox_a_max.z - bbox_a_min.z;
+            let volume_b = bbox_b_max.x - bbox_b_min.x *
+                           bbox_b_max.y - bbox_b_min.y *
+                           bbox_b_max.z - bbox_b_min.z;
+            if volume_a > volume_b {
+                return Ordering::Greater;    
+            }
+            else {
+                return Ordering::Less;
+            }
+            
+        });
+        // 2. try to combine elements to form smallest bounding box
+
+        //todo implement non-recursive algorithm
+        while to_combine.len() > 0 {
+
+            //take first elem and find best combination
+            let mut best_combination = 1;
+
+
+        }
+        
         return BoundingVolumeHierarchy {
-            root_node: BVHNode::new(elements)
+            root_node: BVHNode::BVHNodeLeaf( 
+                BVHNodeLeaf {
+                    element: elements[0].clone()
+                }
+            )
         }
     }
 }
@@ -646,55 +310,56 @@ impl Intersectable for BVHNode {
     fn intersect(&self, ray: &mut Ray) -> bool {
         // if we are a leaf, do actual intersection test, else go down the tree
 
-        let mut ray_hit = false;
-        if self.left_child.is_none() && self.right_child.is_none() {
-            for i in &self.elements {
-                ray_hit |= i.intersect(ray);
-            }
-        } else {
-            assert!(self.left_child.is_some() && self.right_child.is_some());
-
-            // check which subtree to explore first
-            let mut r_left: Ray = Ray::new_from(ray);
-            let mut r_right: Ray = Ray::new_from(ray);
-
-            let left_chil_bbox = &self.left_child.clone().unwrap().bbox;
-            let left_intersect = left_chil_bbox.intersect(&mut r_left);
-
-            let right_chil_bbox = &self.right_child.clone().unwrap().bbox;
-            let right_intersect = right_chil_bbox.intersect(&mut r_right);
-
-            if left_intersect && right_intersect {
-                //check which intersected first
-                if r_left.intersection.time < r_right.intersection.time {
-                    ray_hit |= self.left_child.clone().unwrap().intersect(ray);
-
-                    if !ray_hit {
-                        ray_hit |= self.right_child.clone().unwrap().intersect(ray);
-                    }
-                }
-                else {
-                    ray_hit |= self.right_child.clone().unwrap().intersect(ray);
-
-                    if !ray_hit {
-                        ray_hit |= self.left_child.clone().unwrap().intersect(ray);
-                    }
-                }
-            }
-            else if left_intersect {
-                ray_hit = self.left_child.clone().unwrap().intersect(ray);
-            }
-            else if right_intersect {
-                ray_hit = self.right_child.clone().unwrap().intersect(ray);
-            }
-        }
-
-
+        return false;
         // let mut ray_hit = false;
-        // for i in &self.elements {
-        //     ray_hit |= i.intersect(ray);
+        // if self.left_child.is_none() && self.right_child.is_none() {
+        //     for i in &self.elements {
+        //         ray_hit |= i.intersect(ray);
+        //     }
+        // } else {
+        //     assert!(self.left_child.is_some() && self.right_child.is_some());
+
+        //     // check which subtree to explore first
+        //     let mut r_left: Ray = Ray::new_from(ray);
+        //     let mut r_right: Ray = Ray::new_from(ray);
+
+        //     let left_chil_bbox = &self.left_child.clone().unwrap().bbox;
+        //     let left_intersect = left_chil_bbox.intersect(&mut r_left);
+
+        //     let right_chil_bbox = &self.right_child.clone().unwrap().bbox;
+        //     let right_intersect = right_chil_bbox.intersect(&mut r_right);
+
+        //     if left_intersect && right_intersect {
+        //         //check which intersected first
+        //         if r_left.intersection.time < r_right.intersection.time {
+        //             ray_hit |= self.left_child.clone().unwrap().intersect(ray);
+
+        //             if !ray_hit {
+        //                 ray_hit |= self.right_child.clone().unwrap().intersect(ray);
+        //             }
+        //         }
+        //         else {
+        //             ray_hit |= self.right_child.clone().unwrap().intersect(ray);
+
+        //             if !ray_hit {
+        //                 ray_hit |= self.left_child.clone().unwrap().intersect(ray);
+        //             }
+        //         }
+        //     }
+        //     else if left_intersect {
+        //         ray_hit = self.left_child.clone().unwrap().intersect(ray);
+        //     }
+        //     else if right_intersect {
+        //         ray_hit = self.right_child.clone().unwrap().intersect(ray);
+        //     }
         // }
-        return ray_hit;
+
+
+        // // let mut ray_hit = false;
+        // // for i in &self.elements {
+        // //     ray_hit |= i.intersect(ray);
+        // // }
+        // return ray_hit;
     }
 }
 
@@ -1016,7 +681,7 @@ fn main() {
         // )
     ];
 
-    for _ in 0..100000 {
+    for _ in 0..100 {
         elems.push( Arc::new(gen_random_sphere()));
     }
 
