@@ -19,6 +19,7 @@ use std::fs::File;
 use std::path::Path;
 use std::f32;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 pub struct Color {
     pub red : f32,
@@ -84,13 +85,6 @@ pub enum Element {
     Plane(Plane)
 }
 
-#[derive(PartialEq, Eq)]
-pub enum Axis {
-    AxisX,
-    AxisY,
-    AxisZ
-}
-
 pub struct Light {
     pub position: Point3<f32>
 }
@@ -118,6 +112,15 @@ impl BoundingBox {
 impl Intersectable for BoundingBox {
     #[allow(unused_variables)]
     fn intersect(&self, ray: &mut Ray) -> bool {
+
+        //check if origin is in bbox
+        if ray.origin.x > self.min.x && ray.origin.x < self.max.x &&
+           ray.origin.y > self.min.y && ray.origin.y < self.max.y &&
+           ray.origin.z > self.min.z && ray.origin.z < self.max.z {
+            ray.intersection.time = 0.0;
+            return true;
+        }
+
         let t0 = 0.0;
         let t1 = f32::MAX;
 
@@ -209,7 +212,6 @@ impl Element {
 pub struct Scene {
     pub width: u32,
     pub height: u32,
-    pub elements: Vec<Arc<Element>>,
     pub lights: Light,
     pub bvh: BoundingVolumeHierarchy
 }
@@ -219,10 +221,23 @@ pub enum BVHNode {
     BVHNodeLeaf(BVHNodeLeaf)
 }
 
+impl BVHNode {
+    pub fn get_bounding_box(&self) -> BoundingBox {
+        match *self {
+            BVHNode::BVHNodeCore(ref s) => BoundingBox {
+                min: s.bbox.min,
+                max: s.bbox.max
+            },
+            BVHNode::BVHNodeLeaf(ref p) => p.element.get_bounding_box(),
+        }
+    }    
+}
+
+
 pub struct BVHNodeCore {
     pub bbox: BoundingBox,
-    pub left_child: Option<Arc<BVHNode>>,
-    pub right_child: Option<Arc<BVHNode>>
+    pub left_child: Box<BVHNode>,
+    pub right_child: Box<BVHNode>
 }
 
 pub struct BVHNodeLeaf {
@@ -230,7 +245,7 @@ pub struct BVHNodeLeaf {
 }
 
 pub struct BoundingVolumeHierarchy {
-    pub root_node: BVHNode
+    pub root_node: Box<BVHNode>
 }
 
 impl BVHNodeLeaf {
@@ -245,26 +260,32 @@ impl BoundingVolumeHierarchy {
     pub fn new_from_objects(elements: Vec<Arc<Element>>) -> BoundingVolumeHierarchy {
 
         //create node for each element
-        let mut to_combine = vec![];
+        let mut to_combine: HashSet<Box<BVHNode>> = HashSet::new();
         for elem in &elements {
-            to_combine.push(BVHNodeLeaf::new(elem.clone()));
+            to_combine.push(
+                Box::new(
+                    BVHNode::BVHNodeLeaf(
+                        BVHNodeLeaf::new(elem.clone())
+                    )
+                )
+            );
         }
 
         // 1. order primitive based on bounding box, lower volume at the beginning
         to_combine.sort_by(|a, b| {
-            let bbox_a = a.element.get_bounding_box();
-            let bbox_b = b.element.get_bounding_box();
+            let bbox_a = a.get_bounding_box();
+            let bbox_b = b.get_bounding_box();
             let bbox_a_min = bbox_a.min;
             let bbox_a_max = bbox_a.max;
             let bbox_b_min = bbox_b.min;
             let bbox_b_max = bbox_b.max;
 
-            let volume_a = bbox_a_max.x - bbox_a_min.x *
-                           bbox_a_max.y - bbox_a_min.y *
-                           bbox_a_max.z - bbox_a_min.z;
-            let volume_b = bbox_b_max.x - bbox_b_min.x *
-                           bbox_b_max.y - bbox_b_min.y *
-                           bbox_b_max.z - bbox_b_min.z;
+            let volume_a = (bbox_a_max.x - bbox_a_min.x).abs() *
+                           (bbox_a_max.y - bbox_a_min.y).abs() *
+                           (bbox_a_max.z - bbox_a_min.z).abs();
+            let volume_b = (bbox_b_max.x - bbox_b_min.x).abs() *
+                           (bbox_b_max.y - bbox_b_min.y).abs() *
+                           (bbox_b_max.z - bbox_b_min.z).abs();
             if volume_a > volume_b {
                 return Ordering::Greater;    
             }
@@ -273,25 +294,35 @@ impl BoundingVolumeHierarchy {
             }
             
         });
-        // 2. try to combine elements to form smallest bounding box
+        // 2. try to combine elements
 
         //todo implement non-recursive algorithm
-        while to_combine.len() > 0 {
-
-            //take first elem and find best combination
-            let mut best_combination = 1;
+        while to_combine.len() > 1 {
 
 
+            let new_node: BVHNode = BVHNode::BVHNodeCore(
+                BVHNodeCore{
+                    bbox: BoundingBox {
+                        min: Point3::new(min_x, min_y, min_z),
+                        max: Point3::new(max_x, max_y, max_z)
+                    },
+                    left_child: left,
+                    right_child: right
+                }
+            );
+
+            to_combine.push(Box::new(new_node));
         }
+
         
         return BoundingVolumeHierarchy {
-            root_node: BVHNode::BVHNodeLeaf( 
-                BVHNodeLeaf {
-                    element: elements[0].clone()
-                }
-            )
+            root_node: to_combine.remove(0)  
         }
     }
+}
+
+pub trait Centroid {
+    fn get_center(&self) -> Point3<f32>;
 }
 
 pub trait Intersectable {
@@ -309,57 +340,54 @@ impl Intersectable for BVHNode {
     #[allow(unused_mut)]
     fn intersect(&self, ray: &mut Ray) -> bool {
         // if we are a leaf, do actual intersection test, else go down the tree
+        match *self {
+            BVHNode::BVHNodeCore(ref s) => {
 
-        return false;
-        // let mut ray_hit = false;
-        // if self.left_child.is_none() && self.right_child.is_none() {
-        //     for i in &self.elements {
-        //         ray_hit |= i.intersect(ray);
-        //     }
-        // } else {
-        //     assert!(self.left_child.is_some() && self.right_child.is_some());
+                //do we intersect with our bbox? if so, send ray to child
 
-        //     // check which subtree to explore first
-        //     let mut r_left: Ray = Ray::new_from(ray);
-        //     let mut r_right: Ray = Ray::new_from(ray);
+                let mut tmp_ray = Ray::new_from(ray);
 
-        //     let left_chil_bbox = &self.left_child.clone().unwrap().bbox;
-        //     let left_intersect = left_chil_bbox.intersect(&mut r_left);
+                // println!("{}", s.bbox.min)/;
+                // println!("{}", s.bbox.max);
+                if !s.bbox.intersect(&mut tmp_ray) {
+                    return false;
+                }
 
-        //     let right_chil_bbox = &self.right_child.clone().unwrap().bbox;
-        //     let right_intersect = right_chil_bbox.intersect(&mut r_right);
+                let mut tmp_ray_left = Ray::new_from(ray);
+                let mut tmp_ray_right = Ray::new_from(ray);
 
-        //     if left_intersect && right_intersect {
-        //         //check which intersected first
-        //         if r_left.intersection.time < r_right.intersection.time {
-        //             ray_hit |= self.left_child.clone().unwrap().intersect(ray);
+                let mut success_left = s.left_child.get_bounding_box().intersect(&mut tmp_ray_left);
+                let mut success_right = s.right_child.get_bounding_box().intersect(&mut tmp_ray_right);
 
-        //             if !ray_hit {
-        //                 ray_hit |= self.right_child.clone().unwrap().intersect(ray);
-        //             }
-        //         }
-        //         else {
-        //             ray_hit |= self.right_child.clone().unwrap().intersect(ray);
+                if !success_left && !success_right {
+                    return false;
+                }
 
-        //             if !ray_hit {
-        //                 ray_hit |= self.left_child.clone().unwrap().intersect(ray);
-        //             }
-        //         }
-        //     }
-        //     else if left_intersect {
-        //         ray_hit = self.left_child.clone().unwrap().intersect(ray);
-        //     }
-        //     else if right_intersect {
-        //         ray_hit = self.right_child.clone().unwrap().intersect(ray);
-        //     }
-        // }
+                if success_left && !success_right {
+                    return s.left_child.intersect(ray);
+                }
 
+                if success_right && !success_left {
+                    return s.right_child.intersect(ray);
+                }
 
-        // // let mut ray_hit = false;
-        // // for i in &self.elements {
-        // //     ray_hit |= i.intersect(ray);
-        // // }
-        // return ray_hit;
+                let mut success = false;
+                //Both bbox intersected by ray, check which one was intersected first
+                if tmp_ray_left.intersection.time < tmp_ray_right.intersection.time {
+                    success |= s.left_child.intersect(ray);
+                    success |= s.right_child.intersect(ray);
+                }
+                else {
+                    success |= s.right_child.intersect(ray);
+                    success |= s.left_child.intersect(ray);
+                }
+
+                return success;
+            },
+            BVHNode::BVHNodeLeaf(ref p) => {
+                return p.element.intersect(ray);
+            }
+        }
     }
 }
 
@@ -396,8 +424,7 @@ impl Ray {
 }
 
 const GAMMA: f32 = 2.2;
-const NB_RAY: u32 = 10; //Per pixel
-const NB_ELEM_PER_LEAF: usize = 50;
+const NB_RAY: u32 = 100; //Per pixel
 fn gamma_encode(linear: f32) -> f32 {
     linear.powf(1.0 / GAMMA)
 }
@@ -484,6 +511,12 @@ impl fmt::Display for Ray {
     }
 }
 
+impl Centroid for Sphere {
+    fn get_center(&self) -> Point3<f32> {
+        return  self.object.to_world.transform_point(&Point3::new(0.0, 0.0, 0.0));
+    }
+}
+
 impl Intersectable for Sphere {
     fn intersect(&self, ray: &mut Ray) -> bool {
 
@@ -526,6 +559,13 @@ impl Intersectable for Sphere {
     }
 }
 
+impl Centroid for Plane {
+    fn get_center(&self) -> Point3<f32> {
+        return  self.object.to_world.transform_point(
+            &Point3::new(self.x_max - self.x_min, 0.0, self.z_max - self.z_min));
+    }
+}
+
 impl Intersectable for Plane {
     fn intersect(&self, ray: &mut Ray) -> bool {
         let obj_ray = ray.transform_to(&self.object.to_object);
@@ -561,6 +601,15 @@ impl Intersectable for Element {
         match *self {
             Element::Sphere(ref s) => s.intersect(ray),
             Element::Plane(ref p) => p.intersect(ray)
+        }
+    }
+}
+
+impl Centroid for Element {
+    fn get_center(&self) -> Point3<f32> {
+        match *self {
+            Element::Sphere(ref s) => s.get_center(),
+            Element::Plane(ref p) => p.get_center()
         }
     }
 }
@@ -681,11 +730,27 @@ fn main() {
         // )
     ];
 
-    for _ in 0..100 {
+    for _ in 0..1000 {
         elems.push( Arc::new(gen_random_sphere()));
+        // elems.push(
+        //     Arc::new(
+        //         Element::Sphere(
+        //             Sphere {
+        //                 radius: 500.0,
+        //                 object: Object {
+        //                     color: Color {
+        //                         red: 1.0,
+        //                         green: 0.0,
+        //                         blue: 0.0
+        //                     },
+        //                     to_object: Matrix4::new_translation(&Vector3::new(300.0, 200.0, -100.0)),
+        //                     to_world: Matrix4::new_translation(&Vector3::new(-300.0, -200.0, 100.0))
+        //                 }
+        //             }
+        //         )
+        //     )
+        // );
     }
-
-    let elems2 = vec![];
 
     // Build acceleration structure
     println!("Building acceleration structure");
@@ -694,7 +759,6 @@ fn main() {
     let scene = Scene {
         width: 1920,
         height: 1080,
-        elements: elems2,
         lights: Light {
             position: Point3::new(0.0, 0.0, -100.0)
 
