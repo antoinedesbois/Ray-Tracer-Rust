@@ -4,40 +4,32 @@ extern crate alga;
 extern crate rand;
 extern crate num_cpus;
 extern crate threadpool;
-extern crate pbr;
+extern crate time;
 
 mod tracer;
 
+use tracer::primitives::sphere::Sphere;
+
+use tracer::utils::scene::Scene;
+use tracer::utils::color::Color;
+use tracer::utils::ray::Ray;
+use tracer::primitives::Intersectable;
+
 use image::{DynamicImage, Rgba, GenericImage, Pixel};
-use nalgebra::{Point3, Vector3, Matrix4};
-use alga::linear::Transformation;
-use threadpool::ThreadPool;
-use pbr::ProgressBar;
+use nalgebra::{Point3, Vector3};
 
 use rand::distributions::{IndependentSample, Range};
+use rand::{thread_rng, Rng};
 use std::sync::{Arc, Mutex, mpsc};
-use std::fmt;
 use std::fs::File;
 use std::path::Path;
 use std::f32;
-use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::thread;
 
-const NB_RAY: u32 = 100; //Per pixel
+const NB_RAY: u32 = 100000; //Per pixel
+const NB_RAND_SAMPLE: u32 = 2000000;
 
-fn gen_random_sample(lower_bound: f32, upper_bound: f32) -> f32 {
-    let mut rng = rand::thread_rng();
-    let between = Range::new(lower_bound, upper_bound);
-
-    return between.ind_sample(&mut rng);
-}
-
-fn quadratic_solution(a: f32, b: f32, c: f32) -> (f32, f32) {
-    return (((- b + (b*b - 4.0*a*c).sqrt() ) / (2.0 * a)),
-            ((- b - (b*b - 4.0*a*c).sqrt() ) / (2.0 * a)));
-}
-
-pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
+pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, f32)>) -> Color {
     //Create ray and trace
     let o_x: f32 = px as f32;
     let o_y: f32 = py as f32;
@@ -45,16 +37,19 @@ pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
     let h: f32 = scene.height as f32;
     let mut avg_col = Color::new_black();
 
-    for _ in 0..NB_RAY {
+    for i in 0..NB_RAY {
 
         let r = Ray {
-            origin: Point3::new(o_x - w/2.0 + gen_random_sample(0.0, 1.0), 
-                                o_y - h/2.0 + gen_random_sample(0.0, 1.0), 
-                                0.0),
+            origin: Point3::new(
+                o_x - w/2.0 + 
+                    random_samples[((px * scene.width + py + i) % NB_RAND_SAMPLE) as usize].0,
+                o_y - h/2.0 + 
+                    random_samples[((px * scene.width + py + i) % NB_RAND_SAMPLE) as usize].1, 
+                0.0),
             direction: Vector3::new(0.0, 0.0, -1.0)
         };
 
-        let intersection = sphere.intersect(r);
+        let intersection = scene.sphere.intersect(&r);
 
         match intersection {
             Some(x) => {
@@ -71,45 +66,74 @@ pub fn render_pixel(px: u32, py: u32, scene: std::sync::Arc<Scene>) -> Color {
 }
 
 pub fn render(scene: Scene) {
+
     let w = scene.width;
     let h = scene.height;
 
     let img = Arc::new(Mutex::new(DynamicImage::new_rgb8(w, h)));
     let scene_ptr = Arc::new(scene);
 
-    let pool = ThreadPool::new(num_cpus::get());
     let (tx, rx) = mpsc::channel();
-    let mut pb = ProgressBar::new( (w * h) as u64);
-    pb.format("╢▌▌░╟");
 
+    let mut pixels: Vec<(u32, u32)> = Vec::with_capacity((w * h) as usize);
+    let mut random_samples: Vec<(f32, f32)> = Vec::with_capacity(NB_RAND_SAMPLE  as usize);
     for px in 0..w {
         for py in 0..h {
-            // put_pixel use top left pixel as (0, 0)
-            let tx = tx.clone();
-            let cur_scene = scene_ptr.clone();
-            let cur_img = img.clone();
-
-            pool.execute(move || {
-                let color = render_pixel(px, py, cur_scene);
-                let mut cur_img = cur_img.lock().unwrap();
-
-                cur_img.put_pixel(px, (h -1) - py,
-                          Rgba::to_rgba(&color.to_rgba()));
-
-                tx.send(()).unwrap();
-            });            
+            pixels.push((px, py));
         }
     }
 
-    for _ in 0..w {
-        for _ in 0..h {
-            rx.recv().unwrap();
-            pb.inc();
-        }
+    let mut rng = rand::thread_rng();
+    let between = Range::new(0.0, 1.0);
+    for _ in 0..NB_RAND_SAMPLE {
+        random_samples.push((between.ind_sample(&mut rng),
+                             between.ind_sample(&mut rng)));
     }
 
-    pb.finish_print("done");
+    let mut rng = thread_rng();
+    rng.shuffle(&mut pixels);
+    let num_cpus = num_cpus::get();
+    let pixels_ptr = Arc::new(pixels);
+    let random_samples_ptr = Arc::new(random_samples);
 
+    let time_start = time::get_time().sec;
+
+    for i in 0..num_cpus {
+        let cur_scene = scene_ptr.clone();
+        let cur_pixels = pixels_ptr.clone();
+        let cur_random_samples = random_samples_ptr.clone();
+        let cur_img = img.clone();
+        let tx = tx.clone();
+    
+        thread::spawn(move || {
+            let sliced_pixels = &cur_pixels[i * (cur_pixels.len() / num_cpus)..
+                                            (i + 1) * (cur_pixels.len() / num_cpus)];
+            let mut cols = Vec::with_capacity(sliced_pixels.len());
+            for pixel in sliced_pixels {
+                let color = render_pixel(pixel.0, pixel.1, &cur_scene, &cur_random_samples);
+                cols.push((pixel.0, pixel.1, color));
+            }
+
+            let mut cur_img = cur_img.lock().unwrap();
+
+            for c in cols {
+                cur_img.put_pixel(c.0, (h -1) - c.1,
+                                  Rgba::to_rgba(&c.2.to_rgba()));
+            }
+
+            tx.send(()).unwrap();
+        });
+    }
+    
+    for _ in 0..num_cpus {
+        rx.recv().unwrap();
+    }
+
+    let time_elapsed = time::get_time().sec - time_start;
+    println!("Rendered in {} seconds", time_elapsed);
+    println!("Throughput {}M ray/s", 
+        (((h * w) as u64 * (NB_RAY) as u64) / 1000000) / time_elapsed as u64);
+ 
     println!("Writting image to disk");
     let ref mut fout = File::create(&Path::new("output.png")).unwrap();
     let img = img.lock().unwrap();
@@ -118,21 +142,18 @@ pub fn render(scene: Scene) {
 }
 
 fn main() {
+
     println!("Building scene");
     let scene = Scene {
         width: 1920,
         height: 1080,
-        sphere: 
-            Sphere {
-                radius: 500.0,
-                origin: Point3::new(0.0, 0.0, 0.0),
-                color: Color::new(1.0, 0.0, 0.0)
-            }
+        sphere: Sphere::new(500.0, 
+                            Point3::new(0.0, 0.0, -1000.0), 
+                            Color::new(1.0, 0.0, 0.0))
     };
 
     println!("Rendering...");
     render(scene);
-    
 }
 
 

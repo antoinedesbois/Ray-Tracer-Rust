@@ -1,3 +1,3 @@
 
-mod utils;
-mod primitives;
+pub mod utils;
+pub mod primitives;

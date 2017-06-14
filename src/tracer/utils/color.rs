@@ -1,5 +1,5 @@
 
-use image::{DynamicImage, Rgba, GenericImage, Pixel};
+use image::{Rgba, Pixel};
 
 pub struct Color {
     pub red : f32,
