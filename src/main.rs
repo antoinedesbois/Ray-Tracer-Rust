@@ -8,12 +8,15 @@ extern crate time;
 
 mod tracer;
 
+use tracer::primitives::Primitive;
 use tracer::primitives::sphere::Sphere;
+use tracer::primitives::triangle::Triangle;
 
 use tracer::utils::scene::Scene;
 use tracer::utils::color::Color;
 use tracer::utils::ray::Ray;
 use tracer::primitives::Intersectable;
+use tracer::utils::intersection::Intersection;
 
 use image::{DynamicImage, Rgba, GenericImage, Pixel};
 use nalgebra::{Point3, Vector3};
@@ -26,8 +29,66 @@ use std::path::Path;
 use std::f32;
 use std::thread;
 
-const NB_RAY: u32 = 100000; //Per pixel
+const NB_RAY: u32 = 10000; //Per pixel
 const NB_RAND_SAMPLE: u32 = 2000000;
+
+fn gen_random_spheres() -> Vec<Primitive> {
+
+    let mut primitives: Vec<Primitive> = Vec::new();
+    let mut rng = rand::thread_rng();
+    let between_0_1 = Range::new(0.0, 1.0);
+    // let between_0_500 = Range::new(0.0, 500.0);
+    let between_n500_500 = Range::new(-500.0, 500.0);
+
+    for _ in 0..10 {
+        primitives.push(
+            Primitive::Sphere(
+                Sphere::new(
+                        between_0_1.ind_sample(&mut rng), 
+                        Point3::new(between_n500_500.ind_sample(&mut rng), 
+                                    between_n500_500.ind_sample(&mut rng), 
+                                    -1000.0), 
+                        Color::new(between_0_1.ind_sample(&mut rng),
+                                   between_0_1.ind_sample(&mut rng),
+                                   between_0_1.ind_sample(&mut rng))
+                )
+            )
+        );
+    }
+
+    return primitives;
+}
+
+fn gen_random_triangles() -> Vec<Primitive> {
+
+    let mut primitives: Vec<Triangle> = Vec::new();
+    let mut rng = rand::thread_rng();
+    let between_0_1 = Range::new(0.0, 1.0);
+    // let between_0_500 = Range::new(0.0, 500.0);
+    let between_n500_500 = Range::new(-500.0, 500.0);
+
+    for _ in 0..10 {
+        primitives.push(
+            Primitive::Triangle(
+                Triangle::new(Point3::new(between_n500_500.ind_sample(&mut rng), 
+                                          between_n500_500.ind_sample(&mut rng), 
+                                          -1000.0),
+                              Point3::new(between_n500_500.ind_sample(&mut rng), 
+                                          between_n500_500.ind_sample(&mut rng), 
+                                          -1000.0),
+                              Point3::new(between_n500_500.ind_sample(&mut rng), 
+                                          between_n500_500.ind_sample(&mut rng), 
+                                          -1000.0), 
+                              Color::new(between_0_1.ind_sample(&mut rng),
+                                         between_0_1.ind_sample(&mut rng),
+                                         between_0_1.ind_sample(&mut rng))
+                )
+            )
+        );
+    }
+
+    return primitives;
+}
 
 pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, f32)>) -> Color {
     //Create ray and trace
@@ -49,16 +110,28 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
             direction: Vector3::new(0.0, 0.0, -1.0)
         };
 
-        let intersection = scene.sphere.intersect(&r);
+        let mut closest_intersection = 
+            Intersection {
+                color: Color::new_black(),
+                time: f32::MAX
+            };
 
-        match intersection {
-            Some(x) => {
-                avg_col.red = avg_col.red + (x.color.red / NB_RAY as f32);
-                avg_col.green = avg_col.green + (x.color.green / NB_RAY as f32);
-                avg_col.blue = avg_col.blue + (x.color.blue / NB_RAY as f32);       
-            },
-            None    => {},
+        for el in &scene.primitives {
+            let intersection = el.intersect(&r);    
+
+            match intersection {
+                Some(x) => {
+                    if x.time < closest_intersection.time {
+                        closest_intersection = x;
+                    }
+                },
+                None    => {},
+            }
         }
+
+        avg_col.red = avg_col.red + (closest_intersection.color.red / NB_RAY as f32);
+        avg_col.green = avg_col.green + (closest_intersection.color.green / NB_RAY as f32);
+        avg_col.blue = avg_col.blue + (closest_intersection.color.blue / NB_RAY as f32); 
 
     }
 
@@ -144,12 +217,11 @@ pub fn render(scene: Scene) {
 fn main() {
 
     println!("Building scene");
+
     let scene = Scene {
         width: 1920,
         height: 1080,
-        sphere: Sphere::new(500.0, 
-                            Point3::new(0.0, 0.0, -1000.0), 
-                            Color::new(1.0, 0.0, 0.0))
+        primitives: gen_random_triangles()
     };
 
     println!("Rendering...");
