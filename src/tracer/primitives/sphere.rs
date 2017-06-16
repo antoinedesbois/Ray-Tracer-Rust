@@ -5,7 +5,8 @@ pub use tracer::utils::ray::Ray;
 pub use tracer::utils::color::Color;
 pub use tracer::utils::intersection::Intersection;
 
-use nalgebra::{Point3, Vector3};
+use nalgebra::{Point3, Vector3, distance};
+use nalgebra::core::Unit;
 
 use std::mem;
 
@@ -48,13 +49,14 @@ impl HasColor for Sphere {
 }
 
 impl Intersectable for Sphere {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
+    fn intersect(&self, ray: &Ray) -> Option<f32> {
         let mut t0: f32;
         let mut t1: f32;
-        let l: Vector3<f32> = Vector3::new(self.origin.x - ray.origin.x, 
-                                           self.origin.y - ray.origin.y,
-                                           self.origin.z - ray.origin.z);
+        let l: Vector3<f32> = self.origin - ray.origin;
         let tca = l.dot(&ray.direction);
+        if tca < 0.0 { //intersection is behind ray origin
+            return None;
+        }
         let d2: f32 = l.dot(&l) - tca * tca;
         if d2 > self.radius2 {
             return None;
@@ -77,10 +79,15 @@ impl Intersectable for Sphere {
             }
         } 
  
-        return Some(Intersection{
-            color: Color::new_copy(&self.color),
-            time: t0
-        }); 
+        let p_hit = Point3::new(t0 * ray.direction.x, 
+                                t0 * ray.direction.y,
+                                t0 * ray.direction.z);
+        return Some(distance(&p_hit, &ray.origin));
+        // return Some(Intersection{
+            // color: Color::new_copy(&self.color),
+            // time: t0,
+            // normal: Unit::new_normalize((ray.origin + t0 * ray.direction.as_ref()) - self.origin)
+        // }); 
     }
 }
 

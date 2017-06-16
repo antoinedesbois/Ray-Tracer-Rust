@@ -2,6 +2,7 @@
 pub mod sphere;
 pub mod bounding_box;
 pub mod triangle;
+pub mod light;
 
 use nalgebra::Point3;
 
@@ -21,7 +22,7 @@ pub trait HasColor {
 }
 
 pub trait Intersectable {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection>;
+    fn intersect(&self, ray: &Ray) -> Option<f32>;
 }
 
 pub trait HasCenter {
@@ -36,10 +37,36 @@ pub enum Primitive {
 impl HasBoundingBox for Primitive {
     fn get_bounding_box(&self) -> BoundingBox {
         match self {
-            Primitive::Sphere(s) => s.get_bounding_box(),
-            Primitive::Triangle(t) => t.get_bounding_box()
+            &Primitive::Sphere(ref s) => s.get_bounding_box(),
+            &Primitive::Triangle(ref t) => t.get_bounding_box()
         }
     }
-   
+}
+
+impl HasColor for Primitive {
+    fn get_color(&self) -> Color {
+        match self {
+            &Primitive::Sphere(ref s) => s.get_color(),
+            &Primitive::Triangle(ref t) => t.get_color()
+        }
+    }
+}
+
+impl Intersectable for Primitive {
+    fn intersect(&self, ray: &Ray) -> Option<f32> {
+        match self {
+            &Primitive::Sphere(ref s) => s.intersect(ray),
+            &Primitive::Triangle(ref t) => t.intersect(ray)
+        }
+    }  
+}
+
+impl HasCenter for Primitive {
+    fn get_center(&self) -> Point3<f32> {
+        match self {
+            &Primitive::Sphere(ref s) => s.get_center(),
+            &Primitive::Triangle(ref t) => t.get_center()
+        }
+    }
 }
 

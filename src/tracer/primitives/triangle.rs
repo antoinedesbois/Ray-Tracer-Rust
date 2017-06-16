@@ -7,6 +7,7 @@ pub use tracer::utils::color::Color;
 pub use tracer::utils::intersection::Intersection;
 
 use nalgebra::{Point3, Vector3};
+use nalgebra::core::Unit;
 
 pub struct Triangle {
     pub v0: Point3<f32>,
@@ -59,7 +60,7 @@ impl HasColor for Triangle {
 
 // Möller–Trumbore
 impl Intersectable for Triangle {
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
+    fn intersect(&self, ray: &Ray) -> Option<f32> {
 
       // Calculate planes normal vector
       let pvec: Vector3<f32> = ray.direction.cross(&self.e2);
@@ -83,11 +84,10 @@ impl Intersectable for Triangle {
           return None;
       }
 
+      // W = 1 - u - v
+
       let distance = self.e2.dot(&qvec) * inv_det;
-      return Some(Intersection {
-            color: Color::new_copy(&self.color),
-            time: distance / ray.direction.z
-      });
+      return Some(distance);
     }
 }
 

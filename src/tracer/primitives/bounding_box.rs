@@ -4,7 +4,9 @@ use tracer::utils::ray::Ray;
 use tracer::utils::intersection::Intersection;
 use tracer::utils::color::Color;
 
-use nalgebra::Point3;
+use nalgebra::{Point3, Vector3};
+use nalgebra::core::Unit;
+
 use std::f32;
 
 pub struct BoundingBox {
@@ -29,16 +31,18 @@ pub struct BoundingBox {
 
 impl Intersectable for BoundingBox {
     #[allow(unused_variables)]
-    fn intersect(&self, ray: &Ray) -> Option<Intersection> {
+    fn intersect(&self, ray: &Ray) -> Option<f32> {
 
         //check if origin is in bbox
         if ray.origin.x > self.min.x && ray.origin.x < self.max.x &&
            ray.origin.y > self.min.y && ray.origin.y < self.max.y &&
            ray.origin.z > self.min.z && ray.origin.z < self.max.z {
-            return Some(Intersection {
-                color: Color::new_black(),
-                time: 0.0
-            });
+            return Some(0.0);
+            // return Some(Intersection {
+                // color: Color::new_black(),
+                // time: 0.0,
+                // normal: Unit::new_normalize(Vector3::new(0.0, 0.0, 0.0))
+            // });
         }
 
         let t0 = 0.0;
@@ -105,10 +109,12 @@ impl Intersectable for BoundingBox {
         let intersect = tmin < t1 && tmax > t0;
 
         if intersect {
-            return Some(Intersection {
-                color: Color::new_black(),
-                time: tmin
-            });
+            // return Some(Intersection {
+            //     color: Color::new_black(),
+            //     time: tmin
+            // });
+            //TODO
+            return None;
         }
 
         return None;
