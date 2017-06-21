@@ -18,6 +18,8 @@ use tracer::utils::color::Color;
 use tracer::utils::ray::Ray;
 use tracer::primitives::Intersectable;
 use tracer::utils::intersection::Intersection;
+use tracer::primitives::HasColor;
+use tracer::primitives::HasNormal;
 
 use image::{DynamicImage, Rgba, GenericImage, Pixel};
 use nalgebra::{Point3, Vector3, distance};
@@ -31,7 +33,7 @@ use std::path::Path;
 use std::f32;
 use std::thread;
 
-const NB_RAY: u32 = 10000; //Per pixel
+const NB_RAY: u32 = 1000; //Per pixel
 const NB_RAND_SAMPLE: u32 = 2000000;
 
 fn gen_random_spheres() -> Vec<Primitive> {
@@ -39,7 +41,7 @@ fn gen_random_spheres() -> Vec<Primitive> {
     let mut primitives: Vec<Primitive> = Vec::new();
     let mut rng = rand::thread_rng();
     let between_0_1 = Range::new(0.0, 1.0);
-    let between_0_500 = Range::new(300.0, 500.0);
+    let between_0_500 = Range::new(400.0, 500.0);
     let between_n500_500 = Range::new(-500.0, 500.0);
 
     for _ in 0..1 {
@@ -47,12 +49,12 @@ fn gen_random_spheres() -> Vec<Primitive> {
             Primitive::Sphere(
                 Sphere::new(
                         between_0_500.ind_sample(&mut rng), 
-                        Point3::new(between_n500_500.ind_sample(&mut rng), 
-                                    between_n500_500.ind_sample(&mut rng), 
+                        Point3::new(0.0/*between_n500_500.ind_sample(&mut rng)*/, 
+                                    0.0/*between_n500_500.ind_sample(&mut rng)*/, 
                                     -1000.0), 
-                        Color::new(between_0_1.ind_sample(&mut rng),
-                                   between_0_1.ind_sample(&mut rng),
-                                   between_0_1.ind_sample(&mut rng))
+                        Color::new(1.0/*between_0_1.ind_sample(&mut rng)*/,
+                                   0.0/*between_0_1.ind_sample(&mut rng)*/,
+                                   0.0/*between_0_1.ind_sample(&mut rng)*/)
                 )
             )
         );
@@ -145,15 +147,17 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
             continue;
         }
 
-        // Now that we have an intersection, intersection information: normal, uv, etc
-        
-
+        // Now that we have an intersection, intersection information: color, normal, uv, etc
+        let normal = hit_primitive.unwrap().get_normal(r.origin + r.direction.as_ref() * closest_intersection);
+            // Unit::new_normalize(
+                // (r.origin + closest_intersection * r.direction.as_ref()) - .origin);
+        let color: Color = hit_primitive.unwrap().get_color();
 
         // Now that we have closest intersection, trace ray to light
         // Add small delta so the origin of the new ray does not intersect with the object
         // immediatly
         let r_to_ligh_orig = 
-            r.origin + ((-0.01 + closest_intersection.time) * r.direction.as_ref());
+            r.origin + ((-0.01 + closest_intersection) * r.direction.as_ref());
         let r_to_light = Ray::new(r_to_ligh_orig, scene.light.position - r_to_ligh_orig); 
 
         // let time_to_light = r_to_light.direction.as_ref()
@@ -165,8 +169,8 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
 
             match intersection {
                 Some(x) => {
-                    if x.time < closest_time {
-                        closest_time = x.time;
+                    if x < closest_time {
+                        closest_time = x;
                     }
                 },
                 None    => {},
@@ -180,19 +184,18 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
             );
 
         if distance_to_intersection > distance_to_light {
-
-            let mut light_norm_dot: f32 = closest_intersection.normal.dot(&r_to_light.direction);
+            let mut light_norm_dot: f32 = normal.dot(&r_to_light.direction);
             if light_norm_dot < 0.0 {
                 light_norm_dot = 0.0;
             }
 
             // println!("{}", light_norm_dot_cos);
             avg_col.red = avg_col.red + 
-                ((closest_intersection.color.red * light_norm_dot) / (NB_RAY as f32));
+                ((color.red * light_norm_dot) / (NB_RAY as f32));
             avg_col.green = avg_col.green + 
-                ((closest_intersection.color.green * light_norm_dot) / (NB_RAY as f32));
+                ((color.green * light_norm_dot) / (NB_RAY as f32));
             avg_col.blue = avg_col.blue + 
-                ((closest_intersection.color.blue * light_norm_dot) / (NB_RAY as f32)); 
+                ((color.blue * light_norm_dot) / (NB_RAY as f32)); 
         }
         else {
             // println!("test");

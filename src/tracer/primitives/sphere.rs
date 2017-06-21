@@ -1,5 +1,5 @@
 
-pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter};
+pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter, HasNormal};
 pub use tracer::primitives::bounding_box::BoundingBox;
 pub use tracer::utils::ray::Ray;
 pub use tracer::utils::color::Color;
@@ -79,20 +79,19 @@ impl Intersectable for Sphere {
             }
         } 
  
-        let p_hit = Point3::new(t0 * ray.direction.x, 
-                                t0 * ray.direction.y,
-                                t0 * ray.direction.z);
+        let p_hit = ray.origin + t0 * ray.direction.as_ref();
         return Some(distance(&p_hit, &ray.origin));
-        // return Some(Intersection{
-            // color: Color::new_copy(&self.color),
-            // time: t0,
-            // normal: Unit::new_normalize((ray.origin + t0 * ray.direction.as_ref()) - self.origin)
-        // }); 
     }
 }
 
 impl HasCenter for Sphere {
     fn get_center(&self) -> Point3<f32> {
         return self.origin;
+    }
+}
+
+impl HasNormal for Sphere {
+    fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>> {
+        return Unit::new_normalize(p - self.origin);
     }
 }

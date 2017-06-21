@@ -4,14 +4,15 @@ pub mod bounding_box;
 pub mod triangle;
 pub mod light;
 
-use nalgebra::Point3;
-
 pub use tracer::utils::color::Color;
 pub use tracer::utils::intersection::Intersection;
 pub use tracer::utils::ray::Ray;
 pub use tracer::utils::scene::Scene;
 
 pub use tracer::primitives::bounding_box::BoundingBox;
+
+use nalgebra::{Point3, Vector3, distance};
+use nalgebra::core::Unit;
 
 pub trait HasBoundingBox {
     fn get_bounding_box(&self) -> BoundingBox;
@@ -27,6 +28,10 @@ pub trait Intersectable {
 
 pub trait HasCenter {
     fn get_center(&self) -> Point3<f32>;
+}
+
+pub trait HasNormal {
+    fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>>;
 }
 
 pub enum Primitive {
@@ -69,4 +74,14 @@ impl HasCenter for Primitive {
         }
     }
 }
+
+impl HasNormal for Primitive {
+    fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>> {
+        match self {
+            &Primitive::Sphere(ref s) => s.get_normal(p),
+            &Primitive::Triangle(ref t) => Unit::new_normalize(Vector3::new(0.0, 0.0, 0.0))
+        }
+    }
+}
+
 
