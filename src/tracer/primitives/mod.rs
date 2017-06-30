@@ -5,13 +5,12 @@ pub mod triangle;
 pub mod light;
 
 pub use tracer::utils::color::Color;
-pub use tracer::utils::intersection::Intersection;
 pub use tracer::utils::ray::Ray;
 pub use tracer::utils::scene::Scene;
 
 pub use tracer::primitives::bounding_box::BoundingBox;
 
-use nalgebra::{Point3, Vector3, distance};
+use nalgebra::{Point3, Vector3};
 use nalgebra::core::Unit;
 
 pub trait HasBoundingBox {
@@ -79,7 +78,7 @@ impl HasNormal for Primitive {
     fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>> {
         match self {
             &Primitive::Sphere(ref s) => s.get_normal(p),
-            &Primitive::Triangle(ref t) => Unit::new_normalize(Vector3::new(0.0, 0.0, 0.0))
+            &Primitive::Triangle(ref t) => t.normal
         }
     }
 }

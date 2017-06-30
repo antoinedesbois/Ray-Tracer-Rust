@@ -4,7 +4,6 @@ pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter}
 pub use tracer::primitives::bounding_box::BoundingBox;
 pub use tracer::utils::ray::Ray;
 pub use tracer::utils::color::Color;
-pub use tracer::utils::intersection::Intersection;
 
 use nalgebra::{Point3, Vector3};
 use nalgebra::core::Unit;
@@ -14,19 +13,23 @@ pub struct Triangle {
     pub v1: Point3<f32>,
     pub v2: Point3<f32>,
     pub color: Color,
+    pub normal: Unit<Vector3<f32>>,
     e1: Vector3<f32>,
     e2: Vector3<f32>
 }
 
 impl Triangle {
     pub fn new(v0: Point3<f32>, v1: Point3<f32>, v2: Point3<f32>, color: Color) -> Triangle{
+        let e1 = v1 - v0;
+        let e2 = v2 - v0;
         return Triangle {
             v0: v0,
             v1: v1,
             v2: v2,
+            normal: Unit::new_normalize(e1.cross(&e2)),
             color: color,
-            e1: v1 - v0,
-            e2: v2 - v0
+            e1: e1,
+            e2: e2
         }
     }
 }
@@ -67,7 +70,7 @@ impl Intersectable for Triangle {
       let det: f32 = self.e1.dot(&pvec);
    
       // Ray is parallel to plane
-      if det.abs() < 0.0000001 {
+      if det < 0.00001 && det > -0.00001 {
           return None;
       }
 
@@ -99,3 +102,4 @@ impl HasCenter for Triangle {
                            bbox.max.z - bbox.min.z);
     }
 }
+

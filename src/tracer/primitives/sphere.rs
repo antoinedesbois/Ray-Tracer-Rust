@@ -3,7 +3,6 @@ pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter,
 pub use tracer::primitives::bounding_box::BoundingBox;
 pub use tracer::utils::ray::Ray;
 pub use tracer::utils::color::Color;
-pub use tracer::utils::intersection::Intersection;
 
 use nalgebra::{Point3, Vector3, distance};
 use nalgebra::core::Unit;

@@ -1,11 +1,8 @@
 
 use tracer::primitives::Intersectable;
 use tracer::utils::ray::Ray;
-use tracer::utils::intersection::Intersection;
-use tracer::utils::color::Color;
 
-use nalgebra::{Point3, Vector3};
-use nalgebra::core::Unit;
+use nalgebra::{Point3};
 
 use std::f32;
 
@@ -13,21 +10,6 @@ pub struct BoundingBox {
     pub min: Point3<f32>,
     pub max: Point3<f32>
 }
-
-// impl BoundingBox {
-//     pub fn overlap(&self, bbox: &BoundingBox) -> bool {
-//         if bbox.min.x > self.max.x { return false; }
-//         if bbox.max.x < self.min.x { return false; }
-
-//         if bbox.min.y > self.max.y { return false; }
-//         if bbox.max.y < self.min.y { return false; }
-
-//         if bbox.min.z > self.max.z { return false; }
-//         if bbox.max.z < self.min.z { return false; }
-
-//         return true;
-//     }
-// }
 
 impl Intersectable for BoundingBox {
     #[allow(unused_variables)]
@@ -38,11 +20,6 @@ impl Intersectable for BoundingBox {
            ray.origin.y > self.min.y && ray.origin.y < self.max.y &&
            ray.origin.z > self.min.z && ray.origin.z < self.max.z {
             return Some(0.0);
-            // return Some(Intersection {
-                // color: Color::new_black(),
-                // time: 0.0,
-                // normal: Unit::new_normalize(Vector3::new(0.0, 0.0, 0.0))
-            // });
         }
 
         let t0 = 0.0;
