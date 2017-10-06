@@ -1,6 +1,6 @@
 
 
-pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter};
+pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter, HasNormal};
 pub use tracer::primitives::bounding_box::BoundingBox;
 pub use tracer::utils::ray::Ray;
 pub use tracer::utils::color::Color;
@@ -103,3 +103,9 @@ impl HasCenter for Triangle {
     }
 }
 
+impl HasNormal for Triangle {
+    #[allow(unused_variables)]
+    fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>> {
+        return self.normal;
+    }
+}

@@ -36,7 +36,7 @@ use std::io::BufReader;
 use std::io::BufRead;
 use std::fs::File;
 
-const NB_RAY: u32 = 1; //Per pixel
+const NB_RAY: u32 = 25; //Per pixel
 const NB_RAND_SAMPLE: u32 = 2000000;
 
 #[allow(unused_variables)]
@@ -104,9 +104,9 @@ fn gen_random_triangles() -> Vec<Primitive> {
 fn create_ground() -> Vec<Primitive> {
     return vec![Primitive::Triangle(
                 Triangle::new(
-                    Point3::new(-10000.0,-1000.0, -10000.0),
-                    Point3::new(10000.0, -1000.0, -10000.0),
-                    Point3::new(0.0, -1000.0, 10000.0),
+                    Point3::new(-10000.0, 0.0, -10000.0),
+                    Point3::new(10000.0, 0.0, -10000.0),
+                    Point3::new(0.0, 0.0, 10000.0),
                     Color::new(0.5, 0.5, 0.5)
                 )
             )];
@@ -218,32 +218,26 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
         // point, color, normal, uv, etc
 
         // multiply distance by unit vector to find the hit_point in world coord
-        let v_hit_tmp = closest_intersection * r.direction.as_ref();
+        let v_hit_tmp = scene.camera.eye + (closest_intersection * r.direction.as_ref());
         let p_hit: Point3<f32> = Point3::new(v_hit_tmp.x, v_hit_tmp.y, v_hit_tmp.z);
-        let mut normal = hit_primitive.unwrap().get_normal(p_hit);
-        if normal.dot(r.direction.as_ref()) < 0.0 {
-            normal = -normal;
-        }
+        let normal = hit_primitive.unwrap().get_normal(p_hit);
         let color: Color = hit_primitive.unwrap().get_color();
 
         // Now that we have closest intersection, trace ray to light
         // Add small delta so the origin of the new ray does not intersect with the object
         // immediatly
-        let r_to_light_orig = p_hit - 0.001 * r.direction.as_ref();
-        
+        let r_to_light_orig = p_hit /*- 0.001 * r.direction.as_ref()*/;
         let r_to_light = Ray::new(r_to_light_orig, scene.light.position - r_to_light_orig); 
-
-        // println!("{}", r_to_light_orig);
         let distance_to_light: f32 = distance(&scene.light.position, &r_to_light_orig);
 
-        // println!("{}", distance_to_light);
         closest_intersection = f32::MAX;
         for el in &scene.primitives {
             let intersection = el.intersect(&r_to_light);    
 
             match intersection {
                 Some(x) => {
-                    if x >= 0.0 && x < closest_intersection {
+                    // WARN CAN'T HAVE SPHERE SINCE THEY HAVE 2 INTERSECTION POINT
+                    if x >= 0.1 && x < closest_intersection { 
                         closest_intersection = x;
                     }
                 },
@@ -252,10 +246,7 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
         }
 
         if closest_intersection > distance_to_light {
-            let mut light_norm_dot: f32 = normal.dot(&r_to_light.direction);
-            if light_norm_dot < 0.0 {
-                light_norm_dot = 0.0;
-            }
+            let light_norm_dot: f32 = normal.dot(&r_to_light.direction).abs();
 
             avg_col.red = avg_col.red + 
                 ((color.red * light_norm_dot) / (NB_RAY as f32));
@@ -270,7 +261,6 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
             avg_col.green = avg_col.green + 0.0 / (NB_RAY as f32);
             avg_col.blue = avg_col.blue + 0.0 / (NB_RAY as f32);
         }
-
     }
 
     return avg_col;
@@ -315,7 +305,7 @@ pub fn render(scene: Scene) {
         let cur_random_samples = random_samples_ptr.clone();
         let cur_img = img.clone();
         let tx = tx.clone();
-    
+
         thread::spawn(move || {
             let sliced_pixels = &cur_pixels[i * (cur_pixels.len() / num_cpus)..
                                             (i + 1) * (cur_pixels.len() / num_cpus)];
@@ -326,7 +316,6 @@ pub fn render(scene: Scene) {
             }
 
             let mut cur_img = cur_img.lock().unwrap();
-
             for c in cols {
                 cur_img.put_pixel(c.0, c.1,
                                   Rgba::to_rgba(&c.2.to_rgba()));
@@ -361,25 +350,29 @@ fn main() {
 
     let mut primitives: Vec<Primitive> = Vec::new();
     // let spheres = gen_random_spheres();
-    let triangles = gen_random_triangles();
-    // let ground = create_ground();
+    // let triangles = gen_random_triangles();
+    let ground = create_ground();
     for argument in &args[1..] {
-        // let obj = import_obj(argument);
-        // primitives.extend(obj);
+        let obj = import_obj(argument);
+        primitives.extend(obj);
     }
 
     // primitives.extend(spheres);
-    primitives.extend(triangles);
-    // primitives.extend(ground);
+    // primitives.extend(triangles);
+    primitives.extend(ground);
+
+    let area_light = Light {
+        // position: Point3::new(0.0, 30.0, 10000.0) //todo find out light problem
+        position: Point3::new(0.0, 1000.0, -100.0),
+        primitives: Vec::new()
+    };
 
     let scene = Scene {
         width: 1920,
         height: 1080,
         primitives: primitives,
-        light: Light {
-            position: Point3::new(0.0, 30.0, -10000.0) //todo find out light problem
-        },
-        camera: Camera::new(Point3::new(0.0, 100.0, 1000.0), 
+        light: area_light,
+        camera: Camera::new(Point3::new(0.0, 100.0, 200.0), 
                             Point3::new(0.0, 0.0, -100000.0), 
                             Vector3::new(0.0, 1.0, 0.0), 
                             288.0) //60 deg FOV
