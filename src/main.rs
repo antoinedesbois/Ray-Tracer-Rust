@@ -13,14 +13,12 @@ use tracer::primitives::sphere::Sphere;
 use tracer::primitives::triangle::Triangle;
 use tracer::primitives::light::Light;
 
-use tracer::primitives::Intersectable;
-use tracer::primitives::HasColor;
-use tracer::primitives::HasNormal;
-
 use tracer::utils::scene::Scene;
 use tracer::utils::color::Color;
 use tracer::utils::ray::Ray;
 use tracer::utils::camera::Camera;
+use tracer::utils::bounding_volume_hierarchy::BoundingVolumeHierarchy;
+use tracer::utils::bounding_volume_hierarchy::HitInfo;
 
 use image::{DynamicImage, Rgba, GenericImage, Pixel};
 use nalgebra::{Point3, Vector3, distance};
@@ -39,7 +37,6 @@ use std::fs::File;
 const NB_RAY: u32 = 25; //Per pixel
 const NB_RAND_SAMPLE: u32 = 2000000;
 
-#[allow(unused_variables)]
 #[allow(dead_code)]
 fn gen_random_spheres() -> Vec<Primitive> {
 
@@ -47,7 +44,6 @@ fn gen_random_spheres() -> Vec<Primitive> {
     let mut rng = rand::thread_rng();
     let between_0_1 = Range::new(0.0, 1.0);
     let between_0_500 = Range::new(400.0, 500.0);
-    let between_n500_500 = Range::new(-500.0, 500.0);
 
     for _ in 0..1 {
         primitives.push(
@@ -113,11 +109,10 @@ fn create_ground() -> Vec<Primitive> {
 }
 
 #[allow(dead_code)]
-#[allow(unused_variables)]
 fn import_obj(path: &std::string::String) -> Vec<Primitive> {
     let f = match File::open(path) {
         Ok(file) => file,
-        Err(e) => {
+        Err(_) => {
             println!("Not a valid path: {}", path);
             return vec![];
         }
@@ -151,7 +146,6 @@ fn import_obj(path: &std::string::String) -> Vec<Primitive> {
     return primitives;
 }
 
-#[allow(unused_variables)]
 fn create_rays(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, f32)>) -> Vec<Ray> {
     
     let mut rays: Vec<Ray> = Vec::with_capacity(NB_RAY as usize);
@@ -159,8 +153,6 @@ fn create_rays(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, f32)>
     let o_y: f32 = py as f32;
     let w: f32 = scene.width as f32;
     let h: f32 = scene.height as f32;
-
-    let width_height_ratio: f32 = w / h;
 
     for i in  0..NB_RAY {
         let direction = 
@@ -190,76 +182,48 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
     // Will not trace more rays per pixel than allowed to fit in the vector
     let rays: Vec<Ray> = create_rays(px, py, scene, random_samples);
     for r in rays {
+        let hit_info: Option<HitInfo> = scene.bvh.intersect(&r);
+        match hit_info {
+            Some(hit_info) => {
+               // Now that we have closest intersection, trace ray to light
+               // Add small delta so the origin of the new ray does not intersect with the object
+               // immediatly
+               let r_to_light_orig = hit_info.p_hit;
+               let r_to_light = Ray::new(r_to_light_orig, scene.light.position - r_to_light_orig); 
+               let distance_to_light: f32 = distance(&scene.light.position, &r_to_light_orig);
 
-        let mut closest_intersection = f32::MAX;
-        let mut hit_primitive = None;
+               let hit_info_light: Option<HitInfo> = scene.bvh.intersect(&r_to_light);
 
-        for el in &scene.primitives {
-            let intersection = el.intersect(&r);    
+               let color: Color = hit_info.color;
+               let normal = hit_info.normal;
+               let light_norm_dot: f32 = normal.dot(&r_to_light.direction).abs();
 
-            match intersection {
-                Some(x) => {
-                    if x >= 0.0 && x < closest_intersection {
-                        closest_intersection = x;
-                        hit_primitive = Some(el);
-                    }
-                },
-                None    => {},
-            }
-        }
+               let mut do_shading = |color: &Color, light_norm_dot: f32| {
+                  avg_col.red = avg_col.red + 
+                     ((color.red * light_norm_dot) / (NB_RAY as f32));
+                  avg_col.green = avg_col.green + 
+                     ((color.green * light_norm_dot) / (NB_RAY as f32));
+                  avg_col.blue = avg_col.blue + 
+                     ((color.blue * light_norm_dot) / (NB_RAY as f32));
+               };
 
-        // if no intersection, continue
-        if closest_intersection == f32::MAX {
-            continue;
-        }
-
-
-        // Now that we have an intersection, intersection information: 
-        // point, color, normal, uv, etc
-
-        // multiply distance by unit vector to find the hit_point in world coord
-        let v_hit_tmp = scene.camera.eye + (closest_intersection * r.direction.as_ref());
-        let p_hit: Point3<f32> = Point3::new(v_hit_tmp.x, v_hit_tmp.y, v_hit_tmp.z);
-        let normal = hit_primitive.unwrap().get_normal(p_hit);
-        let color: Color = hit_primitive.unwrap().get_color();
-
-        // Now that we have closest intersection, trace ray to light
-        // Add small delta so the origin of the new ray does not intersect with the object
-        // immediatly
-        let r_to_light_orig = p_hit /*- 0.001 * r.direction.as_ref()*/;
-        let r_to_light = Ray::new(r_to_light_orig, scene.light.position - r_to_light_orig); 
-        let distance_to_light: f32 = distance(&scene.light.position, &r_to_light_orig);
-
-        closest_intersection = f32::MAX;
-        for el in &scene.primitives {
-            let intersection = el.intersect(&r_to_light);    
-
-            match intersection {
-                Some(x) => {
-                    // WARN CAN'T HAVE SPHERE SINCE THEY HAVE 2 INTERSECTION POINT
-                    if x >= 0.1 && x < closest_intersection { 
-                        closest_intersection = x;
-                    }
-                },
-                None    => {},
-            }
-        }
-
-        if closest_intersection > distance_to_light {
-            let light_norm_dot: f32 = normal.dot(&r_to_light.direction).abs();
-
-            avg_col.red = avg_col.red + 
-                ((color.red * light_norm_dot) / (NB_RAY as f32));
-            avg_col.green = avg_col.green + 
-                ((color.green * light_norm_dot) / (NB_RAY as f32));
-            avg_col.blue = avg_col.blue + 
-                ((color.blue * light_norm_dot) / (NB_RAY as f32)); 
-        }
-        else {
-            // println!("{}", closest_intersection);
-            avg_col.red = avg_col.red + 0.0 / (NB_RAY as f32);
-            avg_col.green = avg_col.green + 0.0 / (NB_RAY as f32);
-            avg_col.blue = avg_col.blue + 0.0 / (NB_RAY as f32);
+               match hit_info_light {
+                  Some(x) => {
+                     if distance(&r_to_light_orig, &x.p_hit) > distance_to_light
+                     {
+                        do_shading(&color, light_norm_dot);
+                     }
+                     else
+                     {
+                        do_shading(&Color::new_black(), 1.0);
+                     }
+                  },
+                  None => {
+                     do_shading(&color, light_norm_dot);
+                  }
+               }
+            },
+            None => {}
         }
     }
 
@@ -370,12 +334,12 @@ fn main() {
     let scene = Scene {
         width: 1920,
         height: 1080,
-        primitives: primitives,
         light: area_light,
         camera: Camera::new(Point3::new(0.0, 100.0, 200.0), 
                             Point3::new(0.0, 0.0, -100000.0), 
                             Vector3::new(0.0, 1.0, 0.0), 
-                            288.0) //60 deg FOV
+                            288.0), //60 deg FOV
+        bvh: BoundingVolumeHierarchy::new(primitives)
     };
 
     println!("Rendering...");

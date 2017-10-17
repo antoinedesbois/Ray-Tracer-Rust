@@ -1,9 +1,9 @@
 
 
-pub use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter, HasNormal};
-pub use tracer::primitives::bounding_box::BoundingBox;
-pub use tracer::utils::ray::Ray;
-pub use tracer::utils::color::Color;
+use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter, HasNormal};
+use tracer::primitives::bounding_box::BoundingBox;
+use tracer::utils::ray::Ray;
+use tracer::utils::color::Color;
 
 use nalgebra::{Point3, Vector3};
 use nalgebra::core::Unit;
@@ -103,8 +103,8 @@ impl HasCenter for Triangle {
     }
 }
 
+#[allow(unused_variables)]
 impl HasNormal for Triangle {
-    #[allow(unused_variables)]
     fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>> {
         return self.normal;
     }

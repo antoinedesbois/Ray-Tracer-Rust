@@ -1,18 +1,103 @@
 
 use tracer::primitives::Intersectable;
+use tracer::primitives::Primitive;
+use tracer::primitives::HasBoundingBox;
 use tracer::utils::ray::Ray;
+use tracer::primitives::HasCenter;
 
 use nalgebra::{Point3};
 
 use std::f32;
 
+// Axis aligned
 pub struct BoundingBox {
     pub min: Point3<f32>,
     pub max: Point3<f32>
 }
 
+impl BoundingBox
+{
+    pub fn new(primitive: &Primitive) -> BoundingBox
+    {
+      return primitive.get_bounding_box();
+    }
+
+    pub fn new_from(left: &BoundingBox, right: &BoundingBox) -> BoundingBox
+    {
+      let min_x: f32 = 
+         if left.min.x < right.min.x 
+         {
+            left.min.x
+         }
+         else 
+         {
+            right.min.x
+             
+         };
+      let min_y: f32 = 
+         if left.min.y < right.min.y 
+         {
+            left.min.y
+         }
+         else 
+         {
+            right.min.y
+             
+         };
+      let min_z: f32 = 
+         if left.min.z < right.min.z
+         {
+            left.min.z
+         }
+         else 
+         {
+            right.min.z
+             
+         };
+
+      let max_x: f32 = 
+         if left.max.x > right.max.x 
+         {
+            left.max.x
+         }
+         else 
+         {
+            right.max.x
+             
+         };
+      let max_y: f32 = 
+         if left.max.y > right.max.y 
+         {
+            left.max.y
+         }
+         else 
+         {
+            right.max.y
+             
+         };
+      let max_z: f32 = 
+         if left.max.z > right.max.z
+         {
+            left.max.z
+         }
+         else 
+         {
+            right.max.z
+             
+         };
+
+      let min = Point3::new(min_x, min_y, min_z);
+      let max = Point3::new(max_x, max_y, max_z);
+      return BoundingBox {
+         min: min,
+         max: max
+      };
+
+    }
+}
+
 impl Intersectable for BoundingBox {
-    #[allow(unused_variables)]
+
     fn intersect(&self, ray: &Ray) -> Option<f32> {
 
         //check if origin is in bbox
@@ -86,15 +171,20 @@ impl Intersectable for BoundingBox {
         let intersect = tmin < t1 && tmax > t0;
 
         if intersect {
-            // return Some(Intersection {
-            //     color: Color::new_black(),
-            //     time: tmin
-            // });
-            //TODO
-            return None;
+            assert!(tmin <= tmax);
+            return Some(tmin);
         }
 
         return None;
         
+    }
+}
+
+impl HasCenter for BoundingBox
+{
+   fn get_center(&self) -> Point3<f32> {
+        return Point3::new(self.max.x - self.min.x,
+                           self.max.y - self.min.y,
+                           self.max.z - self.min.z);
     }
 }
