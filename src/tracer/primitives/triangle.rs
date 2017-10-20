@@ -1,6 +1,6 @@
 
 
-use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter, HasNormal};
+use tracer::primitives::{HasBoundingBox, HasColor, Intersectable, HasCenter, HasNormal, CanSample};
 use tracer::primitives::bounding_box::BoundingBox;
 use tracer::utils::ray::Ray;
 use tracer::utils::color::Color;
@@ -107,5 +107,21 @@ impl HasCenter for Triangle {
 impl HasNormal for Triangle {
     fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>> {
         return self.normal;
+    }
+}
+
+impl CanSample for Triangle {
+    fn get_sample(&self, u: f32, v: f32) -> Point3<f32> {
+        let u_sqrt = u.sqrt();
+        let v_sqrt = v.sqrt();
+        let c1 = 1.0 - u_sqrt;
+        let c2 = u_sqrt * (1.0 - v_sqrt);
+        let c3 = v * u_sqrt;
+
+        let x = c1 * self.v0.x + c2 * self.v1.x + c3 * self.v2.x;
+        let y = c1 * self.v0.y + c2 * self.v1.y + c3 * self.v2.y;
+        let z = c1 * self.v0.z + c2 * self.v1.z + c3 * self.v2.z;
+
+        return Point3::new(x, y, z);
     }
 }
