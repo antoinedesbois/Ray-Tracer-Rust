@@ -33,6 +33,10 @@ pub trait HasNormal {
     fn get_normal(&self, p: Point3<f32>) -> Unit<Vector3<f32>>;
 }
 
+pub trait CanSample {
+    fn get_sample(&self, u: f32, v: f32) -> Point3<f32>;
+}
+
 pub enum Primitive {
     Sphere(sphere::Sphere),
     Triangle(triangle::Triangle)
@@ -81,6 +85,16 @@ impl HasNormal for Primitive {
             &Primitive::Triangle(ref t) => t.normal
         }
     }
+}
+
+impl CanSample for Primitive {
+   #[allow(unused_variables)]
+   fn get_sample(&self, u: f32, v: f32) -> Point3<f32> {
+        match self {
+            &Primitive::Sphere(ref s) => unimplemented!(),
+            &Primitive::Triangle(ref t) => t.get_sample(u,v)
+        }
+   }
 }
 
 

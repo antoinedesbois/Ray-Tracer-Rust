@@ -12,6 +12,7 @@ use tracer::primitives::Primitive;
 use tracer::primitives::sphere::Sphere;
 use tracer::primitives::triangle::Triangle;
 use tracer::primitives::light::Light;
+use tracer::primitives::CanSample;
 
 use tracer::utils::scene::Scene;
 use tracer::utils::color::Color;
@@ -34,7 +35,8 @@ use std::io::BufReader;
 use std::io::BufRead;
 use std::fs::File;
 
-const NB_RAY: u32 = 25; //Per pixel
+const NB_RAY: u32 = 1; //Per pixel
+const NB_LIGHT_SAMPLE: u32 = 100;
 const NB_RAND_SAMPLE: u32 = 2000000;
 
 #[allow(dead_code)]
@@ -181,45 +183,52 @@ pub fn render_pixel(px: u32, py: u32, scene: &Scene, random_samples: &Vec<(f32, 
 
     // Will not trace more rays per pixel than allowed to fit in the vector
     let rays: Vec<Ray> = create_rays(px, py, scene, random_samples);
-    for r in rays {
-        let hit_info: Option<HitInfo> = scene.bvh.intersect(&r);
+    for r in 0..rays.len() {
+        let hit_info: Option<HitInfo> = scene.bvh.intersect(&rays[r]);
         match hit_info {
             Some(hit_info) => {
-               // Now that we have closest intersection, trace ray to light
-               // Add small delta so the origin of the new ray does not intersect with the object
-               // immediatly
-               let r_to_light_orig = hit_info.p_hit;
-               let r_to_light = Ray::new(r_to_light_orig, scene.light.position - r_to_light_orig); 
-               let distance_to_light: f32 = distance(&scene.light.position, &r_to_light_orig);
-
-               let hit_info_light: Option<HitInfo> = scene.bvh.intersect(&r_to_light);
 
                let color: Color = hit_info.color;
-               let normal = hit_info.normal;
-               let light_norm_dot: f32 = normal.dot(&r_to_light.direction).abs();
+               let r_to_light_orig = hit_info.p_hit;
+               for i in 0..NB_LIGHT_SAMPLE {
+                  let idx = (r * NB_RAY as usize + i as usize) % random_samples.len();
+                  let random_u_v = random_samples[idx];
+                  let p: Point3<f32> = scene.light.get_sample(random_u_v.0, random_u_v.1);
 
-               let mut do_shading = |color: &Color, light_norm_dot: f32| {
-                  avg_col.red = avg_col.red + 
-                     ((color.red * light_norm_dot) / (NB_RAY as f32));
-                  avg_col.green = avg_col.green + 
-                     ((color.green * light_norm_dot) / (NB_RAY as f32));
-                  avg_col.blue = avg_col.blue + 
-                     ((color.blue * light_norm_dot) / (NB_RAY as f32));
-               };
+                  // Now that we have closest intersection, trace ray to light
+                  // Add small delta so the origin of the new ray does not intersect with the object
+                  // immediatly
+                  let r_to_light = Ray::new(r_to_light_orig, p - r_to_light_orig); 
+                  let distance_to_light: f32 = distance(&p, &r_to_light_orig);
 
-               match hit_info_light {
-                  Some(x) => {
-                     if distance(&r_to_light_orig, &x.p_hit) > distance_to_light
-                     {
+                  let hit_info_light: Option<HitInfo> = scene.bvh.intersect(&r_to_light);
+
+                  let normal = hit_info.normal;
+                  let light_norm_dot: f32 = normal.dot(&r_to_light.direction).abs();
+
+                  let mut do_shading = |color: &Color, light_norm_dot: f32| {
+                     avg_col.red = avg_col.red + 
+                        ((color.red * light_norm_dot) / ((NB_RAY * NB_LIGHT_SAMPLE) as f32));
+                     avg_col.green = avg_col.green + 
+                        ((color.green * light_norm_dot) / ((NB_RAY * NB_LIGHT_SAMPLE) as f32));
+                     avg_col.blue = avg_col.blue + 
+                        ((color.blue * light_norm_dot) / ((NB_RAY * NB_LIGHT_SAMPLE) as f32));
+                  };
+
+                  match hit_info_light {
+                     Some(x) => {
+                        if distance(&r_to_light_orig, &x.p_hit) > distance_to_light
+                        {
+                           do_shading(&color, light_norm_dot);
+                        }
+                        else
+                        {
+                           do_shading(&Color::new_black(), 1.0);
+                        }
+                     },
+                     None => {
                         do_shading(&color, light_norm_dot);
                      }
-                     else
-                     {
-                        do_shading(&Color::new_black(), 1.0);
-                     }
-                  },
-                  None => {
-                     do_shading(&color, light_norm_dot);
                   }
                }
             },
@@ -257,7 +266,7 @@ pub fn render(scene: Scene) {
 
     let mut rng = thread_rng();
     rng.shuffle(&mut pixels);
-    let num_cpus = num_cpus::get();
+    let num_cpus = num_cpus::get()- 1;
     let pixels_ptr = Arc::new(pixels);
     let random_samples_ptr = Arc::new(random_samples);
 
@@ -325,10 +334,16 @@ fn main() {
     // primitives.extend(triangles);
     primitives.extend(ground);
 
+    let light_primitives = vec![
+         Primitive::Triangle(
+            Triangle::new(
+               Point3::new(-10.0, 300.0, -10.0),
+               Point3::new(10.0, 300.0, -10.0),
+               Point3::new(0.0, 300.0, 0.0),
+               Color::new(1.0, 1.0, 1.0)))];
+
     let area_light = Light {
-        // position: Point3::new(0.0, 30.0, 10000.0) //todo find out light problem
-        position: Point3::new(0.0, 1000.0, -100.0),
-        primitives: Vec::new()
+        primitives: light_primitives
     };
 
     let scene = Scene {
